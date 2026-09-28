@@ -18,7 +18,8 @@ jobs:
           SSH_KEY: ${{ secrets.OMINDOS_SSH_KEY }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/omindos
+          printf '%s' "$SSH_KEY" | tr -d '\r' > ~/.ssh/omindos
+          printf '\n' >> ~/.ssh/omindos
           chmod 600 ~/.ssh/omindos
           ssh-keyscan -H 39.108.50.65 >> ~/.ssh/known_hosts
       - name: Deploy exact commit
