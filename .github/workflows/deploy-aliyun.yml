@@ -15,11 +15,10 @@ jobs:
     steps:
       - name: Configure SSH
         env:
-          SSH_KEY: ${{ secrets.OMINDOS_SSH_KEY }}
+          SSH_KEY_B64: ${{ secrets.OMINDOS_SSH_KEY_B64 }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s' "$SSH_KEY" | tr -d '\r' > ~/.ssh/omindos
-          printf '\n' >> ~/.ssh/omindos
+          printf '%s' "$SSH_KEY_B64" | base64 --decode > ~/.ssh/omindos
           chmod 600 ~/.ssh/omindos
           ssh-keyscan -H 39.108.50.65 >> ~/.ssh/known_hosts
       - name: Deploy exact commit
