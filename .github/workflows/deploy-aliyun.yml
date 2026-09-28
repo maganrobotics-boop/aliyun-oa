@@ -1,0 +1,25 @@
+name: Deploy oa to Aliyun
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+concurrency:
+  group: deploy-oa-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.OMINDOS_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/omindos
+          chmod 600 ~/.ssh/omindos
+          ssh-keyscan -H 39.108.50.65 >> ~/.ssh/known_hosts
+      - name: Deploy exact commit
+        run: ssh -i ~/.ssh/omindos -o IdentitiesOnly=yes admin@39.108.50.65 "sudo /opt/omindos-deploy/bin/deploy-from-github.sh oa ${GITHUB_SHA}"
