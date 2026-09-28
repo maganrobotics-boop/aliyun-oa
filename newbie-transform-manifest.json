@@ -1,0 +1,32 @@
+{
+  "kind": "ui-only-candidate-not-deployed",
+  "draft_reference_ref": "b2b721e7e174e919b40b79d36a4819f7c17cc022",
+  "files": {
+    "newbie-village.html": {
+      "source_sha256": "9762b286de23f9278ce2ed8acb790048f76f05782c005a005c87b7ebe76e39b7",
+      "candidate_sha256": "acd091a2cbdd22dfc0cd63295d9be3c486f921cfcdfc34494e784c4fb46297e7"
+    },
+    "newbie-village.js": {
+      "source_sha256": "cde6417fba25adf5eb7e8e1d3ccbbe3764b611be5d1c3dd9698c791cf9ecd498",
+      "candidate_sha256": "869e983f464c4097f2d772c9dd2eca1ff4fe5c3618baf796b3fb5b6957ec5f7d"
+    }
+  },
+  "protected_function_sha256": {
+    "requestJson": "34ef17eba84969d61aa9521d9511b454676be41b4290bbf52c25f339f83ddca8",
+    "readLocalGuest": "34cc4c6c0aa72ecc3f62e1a94168ff535e63cb6dde25c08cd2ee6bf4dc01370e",
+    "writeLocalGuest": "91a6963153b79fd14e464b42cdd65210ad157c6a339ee046068f3249329de858",
+    "localDashboard": "5b35c658d1b9cbb03e52cfe3d2b862d9e1e08a65607a2b5e79343762a7f5ba90",
+    "loadDashboard": "a9bf6d7f6e72e769c57ca04ad8c0c2408cc24b2dde93505144e106e8755f3392",
+    "openLogin": "155d002d2b091771296d780ce5415c47dafb00b65d1978b1f7de7eb557a1d3f2",
+    "requestCode": "875f25d23b2ee0ae6924fc4aa6a7666d6cba3495ce95774efb37304901e9ca28",
+    "verifyCode": "8f73e1d7f56788edf7641ca8419ceddc0c1d28c32433abe7542fc2bde1a84440",
+    "saveProfile": "9b5e1c25f69fe42eb1bd2d1e47f99da712f01391b464527df9a78c72995c4ee7",
+    "signAgreement": "6ae158341a75ef10401ac696168980f207008d658cef92f660643828542957cd",
+    "openTask": "df3072d264fcf42e85b84809786faa8568e2e95a5e9473032ae520a49390774a",
+    "updateTask": "64f3d188c15ed24a85e42b617895a383b17913f85547b77d50fc090618529197",
+    "logout": "be31dde9bde8d622b06ee53581f9d28d773345dcace635bf54c4848affb32bd5",
+    "syncProgress": "30f5822ef9abd8068c3fa70ef988d6e8db38983323da2a8e1febd30bdd60369a",
+    "renderAgreement": "26f0d0ea7e5d1c65514d3418fa0d68bf8978e902c03b4c809affab14eb96f4d6"
+  },
+  "static_route_changes": []
+}

@@ -1,0 +1,13 @@
+export type ChatDocumentSource = { name: string; text: string };
+export type ChatDocumentPlan = { kind: string; title: string; instruction: string; material: string };
+export type ChatDocumentTask = { id: string; title: string; kind?: string; instruction?: string; material?: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result?: string; failure_code?: string; attempts: number; updated_at: number; created_at?: number };
+export const CHAT_DOCUMENT_MAX_BYTES: number;
+export const CHAT_DOCUMENT_HINTS: ReadonlyArray<{ label: string; prompt: string }>;
+export type ChatCapability = { label: string; kind: 'document' | 'meeting_minutes' | null; request: string; instruction: string };
+export function resolveChatCapability(instruction: unknown): ChatCapability | null;
+export function wantsChatDocument(instruction: string): boolean;
+export function readChatDocument(file: File): Promise<ChatDocumentSource>;
+export function planChatDocument(instruction: string, source?: ChatDocumentSource | null, previousAnswer?: string): ChatDocumentPlan;
+export function isChatDocumentTask(value: unknown): value is ChatDocumentTask;
+export function newerChatDocumentTask(current: ChatDocumentTask | undefined, incoming: ChatDocumentTask): ChatDocumentTask | undefined;
+export function chatDocumentFailure(code?: string): string;

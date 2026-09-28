@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="robots" content="noindex,nofollow">
+    <title>新手村管理 · OriginMind × ARTS Robotics</title>
+    <link rel="stylesheet" href="/assets/newbie-admin-20260926.css">
+    <script type="module" src="/newbie-village-admin.js"></script>
+  <link rel="stylesheet" href="/assets/ui-polish-20260926/admin-6cd8f7180a2ed471.css"></head>
+  <body>
+    <header class="topbar">
+      <div class="brand"><small>ORIGINMIND × ARTS ROBOTICS</small><strong>新手村管理</strong></div>
+      <div class="actions"><a class="button secondary back" href="/newbie-village">返回新手村</a><button class="secondary logout" type="button" hidden>退出管理</button></div>
+    </header>
+    <main>
+      <section class="panel login-panel" aria-labelledby="login-heading">
+        <div class="eyebrow">管理入口</div><h1 id="login-heading">管理员登录</h1>
+        <p>查看注册情况、学生学习进度与课程提问，并审核保密协议。</p>
+        <form class="login-form"><label>管理员密码<input name="password" type="password" autocomplete="current-password" required></label><div class="status login-status" role="status"></div><button class="primary" type="submit">登录管理台</button></form>
+      </section>
+      <section class="admin-app" hidden>
+        <div class="page-heading"><div><div class="eyebrow">教学与入村管理</div><h1>了解每位同学的进展</h1><p>从入村注册到课程学习，在这里查看和跟进。</p></div><button class="secondary refresh-current" type="button">刷新数据</button></div>
+        <div class="tabs" role="tablist" aria-label="管理内容">
+          <button type="button" id="tab-overview" role="tab" aria-controls="panel-overview" aria-selected="true" data-tab="overview">注册概况</button>
+          <button type="button" id="tab-students" role="tab" aria-controls="panel-students" aria-selected="false" tabindex="-1" data-tab="students">学生进度</button>
+          <button type="button" id="tab-questions" role="tab" aria-controls="panel-questions" aria-selected="false" tabindex="-1" data-tab="questions">学习提问</button>
+          <button type="button" id="tab-agreements" role="tab" aria-controls="panel-agreements" aria-selected="false" tabindex="-1" data-tab="agreements">协议审核</button>
+        </div>
+        <section id="panel-overview" class="tab-panel" role="tabpanel" aria-labelledby="tab-overview">
+          <div class="status overview-status" role="status"></div>
+          <div class="overview-content" hidden>
+            <div class="metrics"></div>
+            <div class="notice registration-note"></div>
+            <div class="panel task-summary-panel"><div class="section-heading"><div><h2>各关学习进度</h2><p class="progress-note"></p></div><button class="secondary view-students" type="button">查看学生</button></div><div class="task-summary"></div></div>
+          </div>
+        </section>
+        <section id="panel-students" class="tab-panel" role="tabpanel" aria-labelledby="tab-students" hidden>
+          <h2>学生进度</h2><p class="section-description">查看各关状态与提交的学习证据。任务完成由学生自报，不代表教师验收通过。</p>
+          <form class="toolbar students-search" role="search"><label class="search-field">搜索学生<input name="q" type="search" placeholder="姓名或邮箱" autocomplete="off"></label><label>学习状态<select name="status"><option value="all">全部状态</option><option value="not_started">尚未开始</option><option value="in_progress">学习中</option><option value="completed">全部完成（自报）</option></select></label><button class="primary" type="submit">查询</button></form>
+          <div class="status students-status" role="status"></div><div class="students-list"></div><div class="pagination students-pagination" aria-label="学生名单分页"></div>
+        </section>
+        <section id="panel-questions" class="tab-panel" role="tabpanel" aria-labelledby="tab-questions" hidden>
+          <h2>学习提问</h2><p class="section-description question-note">仅记录此功能启用后，已登录学生在课程内向助教提出的问题。</p>
+          <form class="toolbar questions-search" role="search"><label class="search-field">搜索提问<input name="q" type="search" placeholder="问题内容、学生姓名或邮箱" autocomplete="off"></label><label>课程<select name="course"><option value="">全部课程</option></select></label><button class="primary" type="submit">查询</button></form>
+          <div class="student-question-filter" hidden><span></span><button class="text-button clear-student-filter" type="button">查看全部学生</button></div>
+          <div class="status questions-status" role="status"></div><div class="questions-list records"></div><div class="pagination questions-pagination" aria-label="提问分页"></div>
+        </section>
+        <section id="panel-agreements" class="tab-panel" role="tabpanel" aria-labelledby="tab-agreements" hidden>
+          <h2>签署归档与审核</h2><p class="section-description">每次签署自动归档。审核通过后，校内账号可进入个人主页和任务地图。签署档案保存在 Chat 内部管理端。</p>
+          <div class="toolbar"><label>审核状态<select class="status-filter"><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option><option value="all">全部归档</option></select></label><button class="secondary refresh" type="button">刷新记录</button></div>
+          <div class="status list-status" role="status"></div><div class="records agreements-list"></div>
+        </section>
+      </section>
+    </main>
+    <dialog class="student-dialog" aria-labelledby="student-detail-heading"><div class="dialog-inner"><div class="dialog-head"><div><div class="eyebrow">学生学习档案</div><h2 id="student-detail-heading"></h2><p class="student-detail-email"></p></div><button class="close" type="button" aria-label="关闭学生详情">×</button></div><div class="student-detail-meta record-meta"></div><div class="section-heading"><h3>课程任务与学习证据</h3><button class="secondary student-questions" type="button">查看该生提问</button></div><p class="section-description">以下为学生自报进度，尚未经过教师验收。</p><div class="student-detail-tasks"></div></div></dialog>
+    <dialog class="review-dialog" aria-labelledby="review-heading">
+      <div class="dialog-inner"><div class="dialog-head"><div><h2 id="review-heading">审核签署记录</h2><p class="review-person"></p></div><button class="close" type="button" aria-label="关闭审核">×</button></div><form class="review-form"><label>审核备注<textarea name="reviewNote" maxlength="500" placeholder="通过时可选；驳回时必须填写原因。"></textarea></label><div class="status review-status" role="status"></div><div class="dialog-actions"><button class="danger reject" type="button">驳回</button><button class="primary approve" type="button">通过并准予入村</button></div></form></div>
+    </dialog>
+  </body>
+</html>

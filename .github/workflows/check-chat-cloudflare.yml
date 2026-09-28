@@ -1,0 +1,68 @@
+name: Check Chat Cloudflare
+
+on:
+  pull_request:
+    paths:
+      - 'chat-cloudflare/**'
+      - '.github/workflows/check-chat-cloudflare.yml'
+      - '.github/workflows/deploy-chat-cloudflare.yml'
+      - '.github/workflows/deploy-chat-preview-cloudflare.yml'
+      - '.github/workflows/initialize-chat-admin.yml'
+      - '.github/workflows/repair-chat-admin-pbkdf2.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'chat-cloudflare/**'
+      - '.github/workflows/check-chat-cloudflare.yml'
+      - '.github/workflows/deploy-chat-cloudflare.yml'
+      - '.github/workflows/deploy-chat-preview-cloudflare.yml'
+      - '.github/workflows/initialize-chat-admin.yml'
+      - '.github/workflows/repair-chat-admin-pbkdf2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: chat-cloudflare/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --prefix chat-cloudflare
+      - name: Check Worker, assets, release gates, and tests
+        run: |
+          npm --prefix chat-cloudflare run check
+          npm --prefix chat-cloudflare run check:wrangler
+          node --check chat-cloudflare/scripts/release-preview-cloudflare.mjs
+      - name: Install isolated browser test tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/formula-browser" --no-save --ignore-scripts playwright@1.63.0
+          node "$RUNNER_TEMP/formula-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Verify rendered answers and screenshot formula regressions
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/formula-browser/node_modules/playwright/index.mjs
+          BROWSER_REPORT_DIR: ${{ runner.temp }}/formula-browser-report
+        run: |
+          node chat-cloudflare/scripts/check-answer-browser.mjs
+          node chat-cloudflare/scripts/check-message-actions-browser.mjs
+          node chat-cloudflare/scripts/check-newbie-village-browser.mjs
+          node chat-cloudflare/scripts/check-formula-runtime-browser.mjs
+          node chat-cloudflare/scripts/check-answer-layout-browser.mjs
+      - name: Preserve browser verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chat-formula-browser-${{ github.sha }}
+          path: ${{ runner.temp }}/formula-browser-report
+          if-no-files-found: warn
+          retention-days: 14
+
