@@ -2,12 +2,6 @@ name: Initialize Chat administrator manually
 
 on:
   workflow_dispatch:
-    inputs:
-      confirmation:
-        description: 'Type exactly: originmind-public-chat-production:initialize-admin:chat.omindos.ai'
-        required: true
-        type: string
-
 permissions:
   contents: read
 

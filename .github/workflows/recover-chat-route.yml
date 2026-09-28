@@ -1,7 +1,6 @@
 name: Recover Chat production route
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
 

@@ -2,7 +2,6 @@ name: Fix Chat ZIP public asset tests manually
 
 on:
   workflow_dispatch:
-
 permissions:
   contents: write
 

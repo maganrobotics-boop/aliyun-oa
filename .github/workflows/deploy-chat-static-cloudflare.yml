@@ -2,12 +2,6 @@ name: Release Chat static assets manually
 
 on:
   workflow_dispatch:
-    inputs:
-      confirmation:
-        description: 'Type exactly: originmind-public-chat-production:static-assets:chat.omindos.ai'
-        required: true
-        type: string
-
 permissions:
   contents: read
 

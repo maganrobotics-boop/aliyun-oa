@@ -1,19 +1,7 @@
 name: Release Chat preview to Cloudflare manually
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'chat-cloudflare/**'
-      - '.github/workflows/deploy-chat-preview-cloudflare.yml'
   workflow_dispatch:
-    inputs:
-      confirmation:
-        description: 'Type exactly: originmind-public-chat-preview:originmind-public-chat-preview:preview.omindos.ai'
-        required: true
-        type: string
-
 permissions:
   contents: read
 

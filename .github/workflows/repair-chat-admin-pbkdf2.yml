@@ -2,12 +2,6 @@ name: Repair Chat administrator PBKDF2 manually
 
 on:
   workflow_dispatch:
-    inputs:
-      confirmation:
-        description: 'Type exactly: originmind-public-chat-production:repair-cloudflare-pbkdf2:chat.omindos.ai'
-        required: true
-        type: string
-
 permissions:
   contents: read
 

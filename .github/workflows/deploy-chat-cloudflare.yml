@@ -1,19 +1,7 @@
 name: Release Chat to Cloudflare manually
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'chat-cloudflare/**'
-      - '.github/workflows/deploy-chat-cloudflare.yml'
   workflow_dispatch:
-    inputs:
-      confirmation:
-        description: 'Type exactly: originmind-public-chat-production:originmind-public-chat-production:chat.omindos.ai'
-        required: true
-        type: string
-
 permissions:
   contents: read
 

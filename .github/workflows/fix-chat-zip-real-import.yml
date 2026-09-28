@@ -2,7 +2,6 @@ name: Fix Chat ZIP real import manually
 
 on:
   workflow_dispatch:
-
 permissions:
   contents: write
 
