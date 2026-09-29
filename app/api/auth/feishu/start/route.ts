@@ -87,7 +87,8 @@ async function beginFeishuOAuth(request: Request, action: OAuthAction, presentat
   }
 
   const requestUrl = new URL(request.url);
-  const returnPath = normalizeReturnPath(requestUrl.searchParams.get("return_to"));
+  const requestedReturnPath = normalizeReturnPath(requestUrl.searchParams.get("return_to"));
+  const returnPath = action === "login" ? "/" : requestedReturnPath;
   if (presentation === "qr" && (action !== "login" || !sameOriginPost(request, config.origin))) {
     return noStoreJson({ error: "二维码登录请求来源无效，请刷新 OA 登录页重试。" }, 403);
   }
