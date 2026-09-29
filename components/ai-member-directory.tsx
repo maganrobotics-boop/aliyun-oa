@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { Bot, MessageCircle, RefreshCw } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useOaConversation } from '@/components/knowledge/oa-conversation-context';
-import { AiMemberInteraction } from './ai-member-interaction';
+import { AiMemberInteraction, InteractionContent } from './ai-member-interaction';
 
 export type AiRoleKey = 'research' | 'ta' | 'senior' | 'sister';
 export type AiMemberSummary = {
@@ -132,4 +132,12 @@ export function AiMemberDirectory({ members = [], loading = false, error = '', o
       </article>;
     })}</div>
   </section>;
+}
+
+export function OaResearchWorkspace() {
+ const workspace = useAiMembers();
+ const member = workspace.members.find(item => item.role === 'research');
+ if (workspace.loading) return <p role="status">正在连接助研…</p>;
+ if (workspace.error || !member || !available(member)) return <div role="alert"><p>{workspace.error || '助研暂不可用，请稍后重试。'}</p><button type="button" onClick={workspace.reload}>重试</button></div>;
+ return <InteractionContent key={member.id} member={member} mode="chat" inline />;
 }

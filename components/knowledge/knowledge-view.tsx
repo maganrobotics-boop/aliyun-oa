@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner";
 import { KnowledgePackageImport } from "./package-import";
 import { OaChatPanel } from "./oa-chat-panel";
+import { OaRichAnswer } from "./oa-rich-answer";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -280,7 +281,7 @@ function KnowledgeHistory({ detail }: { detail: ReviewDetail }) {
         <small>提交人：{item.createdByName || item.createdByEmail || "项目成员"}</small>
         {item.summary && <p>{item.summary}</p>}
         {item.reviewNote && <div className="knowledge-history-note"><strong>审核意见</strong><p>{item.reviewNote}</p></div>}
-        <details><summary>查看本版正文</summary><div className="knowledge-history-content">{item.content || "本版本没有可显示的正文。"}</div></details>
+        <details><summary>查看本版正文</summary><div className="knowledge-history-content"><OaRichAnswer answer={item.content || "本版本没有可显示的正文。"} /></div></details>
       </article>)}</div>
       <ol className="knowledge-event-history">{events.map((item: KnowledgeEvent) => <li key={item.id}>
         <div><strong>{eventLabels[item.action] || item.action}</strong><time>{formatDate(item.createdAt)}</time></div>
@@ -317,7 +318,7 @@ function KnowledgeReviewDialog({ detail, open, loading, error, note, setNote, vi
     {loading ? <LoadingPanel label="正在加载投稿正文…" /> : error ? <ErrorPanel message={error} onRetry={onRetry} /> : detail ? <div className="knowledge-review-detail">
       {(revision?.summary || detail.item.summary) && <section><h3>摘要</h3><p>{revision?.summary || detail.item.summary}</p></section>}
       {detail.item.contentPartCount && detail.item.contentPartCount > 1 && <section><h3>导入方式</h3><p><KnowledgeMultipartReviewMeta item={detail.item} /></p></section>}
-      <section><h3>知识正文</h3><div className="knowledge-review-content">{reviewContent || "当前版本没有可显示的正文。"}</div>{!reviewContent && <p className="knowledge-review-blocked"><AlertTriangle className="size-4" />正文未完整加载，不能执行审核。请重新加载。</p>}</section>
+      <section><h3>知识正文</h3><div className="knowledge-review-content"><OaRichAnswer answer={reviewContent || "当前版本没有可显示的正文。"} assets={detail.assets} /></div>{!reviewContent && <p className="knowledge-review-blocked"><AlertTriangle className="size-4" />正文未完整加载，不能执行审核。请重新加载。</p>}</section>
       <KnowledgeAssetPreview assets={detail.assets || []} />
       {(revision?.sourceLabel || detail.item.sourceLabel || sourceUrl) && <section><h3>来源</h3><p>{revision?.sourceLabel || detail.item.sourceLabel || "投稿人提供的参考链接"}</p>{sourceUrl && <a className="knowledge-source-link" href={sourceUrl} target="_blank" rel="noreferrer">打开来源链接</a>}</section>}
       {!actionable && savedVisibility && <section><h3>当前可见范围</h3><p><KnowledgeVisibilityBadge item={detail.item} />{savedVisibility === "public" ? " 已供 chat.omindos.cn 的 ARTS Robotics AI assistant 检索使用。" : " 仅已登录并完成准入与保密签署的成员可在 OA 内检索。"}</p></section>}
@@ -558,7 +559,7 @@ export function KnowledgeView({ canReviewKnowledge, isAdmin = false, activeSecti
       const data = await responseJson<KnowledgeDetailResponse>(response, "知识详情加载失败");
       if (!data.item || data.item.id !== item.id) throw new Error("知识详情不完整");
       if (controller.signal.aborted) return;
-      setReviewDetail({ item: data.item, revisions: data.revisions ?? [], events: data.events ?? [] });
+      setReviewDetail({ item: data.item, revisions: data.revisions ?? [], events: data.events ?? [], assets: data.assets ?? [] });
     } catch (error) {
       if (controller.signal.aborted) return;
       setReviewDetailError(error instanceof Error ? error.message : "请稍后重试");

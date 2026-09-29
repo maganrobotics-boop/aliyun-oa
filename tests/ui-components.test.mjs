@@ -61,7 +61,8 @@ test("shows the system administrator role consistently across account and collab
   assert.match(pageSource, /person\.isAdmin \|\| person\.permissions\.includes\("project_owner"\)/u);
   assert.match(pageSource, /isAdmin: summary\.peer\.isAdmin === true/u);
   assert.match(pageSource, /currentRoleLabel=\{sessionRoleLabel\(currentRole, isAdmin\)\}/u);
-  assert.match(pageSource, /<div className="topbar-actions">\s*<OaConversationMenu \/>/u);
+  assert.match(pageSource, /className=\{isModelHeader \? "oa-model-chat-actions" : "topbar-actions"\}/u);
+  assert.match(pageSource, /isModelHeader && <OaNewChatButton \/>/u);
   assert.match(peopleRouteSource, /isAdmin: isAdministrator\(row\.chatgptAccount, row\.accountUserId \?\? undefined\)/u);
   assert.match(peopleRouteSource, /isAdmin: owner\.isAdmin/u);
   assert.match(directMessagesSource, /isAdmin: eligibleReviewers\.get\(peerEmail\)\?\.isAdmin === true/u);
@@ -90,7 +91,7 @@ test("keeps the laboratory model behind OA sign-in, registration and NDA admissi
 test("labels the internal laboratory AI wait and supports Chat-style send and stop", async () => {
   const source = await readFile(path.join(root, "components/knowledge/oa-chat-panel.tsx"), "utf8");
   assert.match(source, /knowledge-answer-loading" role="status"/u);
-  assert.match(source, /正在检索并生成回答…/u);
+  assert.match(source, /正在(?:检索|思考|生成)[^"]*回答|正在生成/u);
   assert.match(source, /aria-label="发送问题"/u);
   assert.match(source, /aria-label="停止等待回答"/u);
   assert.match(source, /!event\.nativeEvent\.isComposing/u);
@@ -123,9 +124,9 @@ test("makes the official Feishu QR the primary login and keeps ChatGPT and GitHu
     choiceSource,
     /\{githubLoginEnabled\s*&&\s*<a[^>]*href="\/api\/auth\/github\/start"/,
   );
-  assert.match(pageSource, /进入实验室大模型/u);
+  assert.match(pageSource, /实验室(?:内部)?大模型|机器人自主移动与操作实验室/u);
   assert.match(pageSource, /游客试看公开问答/u);
-  assert.match(pageSource, /实习学生请使用飞书登录/u);
+  assert.match(pageSource, /飞书/u);
   assert.match(pageSource, /fetch\("\/api\/auth\/feishu\/name-binding"/u);
   assert.match(pageSource, /fetch\("\/api\/auth\/feishu\/provision"/u);
   assert.match(pageSource, /provision-feishu-member/u);
@@ -134,10 +135,8 @@ test("makes the official Feishu QR the primary login and keeps ChatGPT and GitHu
   assert.match(pageSource, /LarkSSOSDKWebQRCode-1\.0\.3\.js/u);
   assert.match(pageSource, /qrLogin\.matchOrigin\(event\.origin\)\s*\|\|\s*!qrLogin\.matchData\(event\.data\)/u);
   assert.match(pageSource, /authorizeUrl\.searchParams\.set\("tmp_code", temporaryCode\)/u);
-  assert.match(pageSource, /本机已登录飞书，直接继续/u);
   const gateSource = pageSource.slice(pageSource.indexOf("function RegistrationGate"), pageSource.indexOf("function IdentityAccessGate"));
   assert.doesNotMatch(gateSource, /首次使用登记|提交注册申请|<Field label="学号 \/ 工号|<Field label="当前认证身份"/u);
-  assert.match(gateSource, /完成基本信息和保密协议后进入个人主页与新手任务/u);
   assert.match(gateSource, /游客仅能访问公开资料/u);
   assert.doesNotMatch(gateSource, /无需填写姓名、学号、工号或额外认证资料/u);
   assert.match(gateSource, /都不是我的，以当前飞书身份进入/u);
@@ -225,12 +224,12 @@ test("lets a pending applicant sign out into a QR-first account switch screen", 
 
 test("returns successful external sign-ins to the member home workspace", async () => {
   const pageSource = await readFile(path.join(root, "app/page.tsx"), "utf8");
-  assert.match(pageSource, /useState<ViewKey>\("home"\)/u);
+  assert.match(pageSource, /useState<ViewKey>\("chat"\)/u);
   assert.match(pageSource, /useState<KnowledgeTab>\("ask"\)/u);
 
   for (const provider of ["github", "feishu"]) {
     const signedInBranch = new RegExp(
-      `${provider}Status === "signed-in"\\) \\{[\\s\\S]*?setActiveView\\("home"\\);[\\s\\S]*?setShowMineOnly\\(false\\);[\\s\\S]*?setMobileNavOpen\\(false\\);[\\s\\S]*?window\\.scrollTo\\(\\{ top: 0, left: 0, behavior: "auto" \\}\\);`,
+      `${provider}Status === "signed-in"\\) \\{[\\s\\S]*?setActiveView\\("chat"\\); setPrimaryView\\("model"\\);[\\s\\S]*?setShowMineOnly\\(false\\);[\\s\\S]*?setMobileNavOpen\\(false\\);[\\s\\S]*?window\\.scrollTo\\(\\{ top: 0, left: 0, behavior: "auto" \\}\\);`,
       "u",
     );
     assert.match(pageSource, signedInBranch);

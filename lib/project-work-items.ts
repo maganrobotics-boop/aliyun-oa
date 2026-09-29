@@ -75,11 +75,12 @@ export function parseMilestoneDueAt(value: unknown, current: string | null):
   { ok: true; dueAt: string | null } | { ok: false; error: string } {
   if (value === undefined) return { ok: true, dueAt: current };
   if (value === null || value === '') return { ok: true, dueAt: null };
+  if (typeof value === 'string' && /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(value) && Number(value.slice(0, 4)) > 0) return { ok: true, dueAt: value };
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(value) && Number(value.slice(0, 4)) > 0) {
     const timestamp = Date.parse(`${value}T00:00:00.000Z`);
     if (Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value) return { ok: true, dueAt: value };
   }
-  return { ok: false, error: '计划日期须为真实的 YYYY-MM-DD 日期。' };
+  return { ok: false, error: '计划日期须为真实的 YYYY-MM-DD 日期或 YYYY-MM 月份。' };
 }
 
 // Bounded recent revisions preserve revoked acceptance evidence. This is not a complete audit log.
@@ -146,4 +147,15 @@ export function extractMeetingActions(markdown: string) {
     if (title && !/^(?:暂无|无|待补充)[。.!！]?$/u.test(title) && title.length <= 240) actions.push(title);
   }
   return [...new Set(actions)].slice(0, 30);
+}
+
+/** Month-only commitments remain month-only; no day is invented. */
+export function formatProjectDueAt(value: string | null): string {
+  if (!value) return '日期待定';
+  if (/^\d{4}-\d{2}$/u.test(value)) return `${value.slice(0, 4)} 年 ${Number(value.slice(5, 7))} 月`;
+  return value;
+}
+export function projectDueSortKey(value: string | null): string {
+  if (!value) return '9999-12-31';
+  return /^\d{4}-\d{2}$/u.test(value) ? `${value}-99` : value;
 }

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { createIntegration, isAiMemberPath, incomingAiRequest, sendAiResponse, requestCancellation } from '/opt/originmind-ai-members/releases/20260927T070000Z-streaming-ai/integration.mjs';
+import { createIntegration, isAiMemberPath, incomingAiRequest, sendAiResponse, requestCancellation } from './ai-members/integration.mjs';
 process.env.NODE_ENV = 'production';
 const { default: next } = await import('next');
 
@@ -14,7 +14,7 @@ if (!Number.isInteger(listenPort) || listenPort < 1024 || listenPort > 65535) th
 // Isolated AI member data only. Existing OA identity, data and routes stay in Next.
 let aiMembers = null;
 try {
-  const snapshot = JSON.parse(await readFile('/opt/originmind-ai-members/releases/20260927T070000Z-streaming-ai/courses.json', 'utf8'));
+  const snapshot = JSON.parse(await readFile(new URL('./ai-members/courses.json', import.meta.url), 'utf8'));
   aiMembers = createIntegration({
     audience: 'oa', databasePath: '/var/lib/originmind-ai-members/ai-members.sqlite', origin: publicOrigin.origin,
     courses: snapshot.courses, courseVersion: snapshot.courseVersion, port: listenPort,

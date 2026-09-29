@@ -25,11 +25,11 @@ import { OaMeetingMode, type OaMeetingModeHandle } from './oa-meeting-mode';
 import { toast } from 'sonner';
 
 type Image = { url: string; alt: string; mimeType: string };
-type Turn = { id: string; order: number; question: string; answer: string; citations: KnowledgeCitation[]; images: Image[]; failed?: boolean; streaming?: boolean };
+type Turn = { id: string; order: number; question: string; answer: string; citations: KnowledgeCitation[]; images: Image[]; failed?: boolean; streaming?: boolean; answerSucceeded?: boolean };
 type Reply = { answer?: string; citations?: KnowledgeCitation[]; images?: Image[]; error?: string; mode?: string; fallbackReason?: string };
 
 type EditableImage = { path: string; alt: string; file?: File; sourceUrl?: string };
-const meetingModePrompt = '@会议模式919700881';
+const meetingModePrompt = '@会议模式';
 const quickActions = [
   { label: '知识问答', prompt: '机器人自主移动与操作实验室适合本科生参与的方向有哪些？', helper: '查公开与内部资料' },
   { label: '新手村助教', prompt: '@项目总结 请把我的新手村任务拆成今天能做的清单：完善资料、确认可投入时间、阅读保密要求、选择项目方向、完成第一个学习记录。', helper: '拆任务和给建议' },
@@ -239,10 +239,11 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
     element.style.height = `${Math.min(element.scrollHeight, 144)}px`;
   }, [question]);
 
-  const ask = async (retry?: Turn) => {
+  const ask = async (retry?: Turn, suggestedQuestion?: string) => {
     if (sending.current) return;
-    const normalized = (retry?.question || question).trim();
+    const normalized = (suggestedQuestion || retry?.question || question).trim();
     if (normalized.length < 2 || normalized.length > 2000) { setError('问题需为 2–2000 个字符。'); return; }
+    if (!retry && /^[@＠]会议模式$/u.test(normalized)) { setMeetingModeOpen(true); setQuestion(''); setError(''); stickToEnd.current = true; return; }
     const meetingCommand = retry ? null : resolveMeetingModeCommand(normalized);
     if (meetingCommand?.action === 'start') {
       setMeetingNumber(meetingCommand.meeting); setMeetingCommandEpoch(value => value + 1); setMeetingModeOpen(true);
@@ -305,7 +306,9 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
     if (modelQuestion.length < 2) { setError('请在功能名后填写至少 2 个字符的问题。'); return; }
     const id = retry?.id || crypto.randomUUID();
     const preceding = retry ? turns.slice(0, turns.findIndex(turn => turn.id === retry.id)) : turns;
-    const history = preceding.slice(-2).map(turn => ({ role: 'user', content: turn.question }));
+    const history = preceding.filter(turn => turn.answerSucceeded === true && !turn.failed && !turn.streaming &&
+      typeof turn.answer === 'string' && turn.answer.trim() && turn.answer.length <= 13000 && turn.answer.isWellFormed())
+      .slice(-2).map(turn => ({ role: 'user', content: turn.question }));
     const sequence = ++requestSequence.current;
     const controller = new AbortController(); requestRef.current = controller; sending.current = true;
     let httpStatus: number | null = null;
@@ -334,14 +337,18 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
       if (!response.ok || typeof data?.answer !== 'string' || !data.answer.trim()) throw new Error(data?.error || '暂未收到完整回答，请重试。');
       const images = (Array.isArray(data.images) ? data.images : []).filter(validOaChatImage).slice(0, 4);
       const fallback = data.mode === 'retrieval' && data.fallbackReason !== 'no_documents';
-      setRequestStatus(replyChatIndicators(data));
+      const indicators = replyChatIndicators(data);
+      const answerSucceeded = ['ai', 'general'].includes(data.mode || '') && data.error === undefined &&
+        data.fallbackReason === undefined && indicators.items[4]?.state === 'ready' &&
+        data.answer.length <= 13000 && data.answer.isWellFormed();
+      setRequestStatus(indicators);
       const fullAnswer = data.answer!;
-      setTurns(current => current.map(turn => turn.id === id ? { ...turn, answer: fullAnswer, citations: data.citations || [], images, failed: fallback, streaming: false } : turn));
+      setTurns(current => current.map(turn => turn.id === id ? { ...turn, answer: fullAnswer, citations: data.citations || [], images, failed: fallback, streaming: false, answerSucceeded } : turn));
       setLastAnswer(fallback ? null : { body: userFacingAnswer(data.answer), omittedImages: images.length });
     } catch (cause) {
       if (sequence !== requestSequence.current) return;
       setRequestStatus(failedChatIndicators(httpStatus, controller.signal.aborted));
-      setTurns(current => current.map(turn => turn.id === id ? { ...turn, answer: '', citations: [], images: [], failed: true, streaming: false } : turn));
+      setTurns(current => current.map(turn => turn.id === id ? { ...turn, answer: '', citations: [], images: [], failed: true, streaming: false, answerSucceeded: false } : turn));
       setError(controller.signal.aborted ? '已停止等待。问题已保留，可以重试。' : cause instanceof Error ? cause.message : '发送失败，请重试。');
       setQuestion(normalized);
     } finally {
@@ -361,7 +368,7 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
   return <section className="oa-shared-chat" aria-label="OA 实验室 AI 助手">
     <div className="chat-app oa-chat-surface">
       <div className="messages oa-chat-messages" ref={scroll} onScroll={() => { const element = scroll.current; if (element) stickToEnd.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96; }}>
-        {timeline.length === 0 && !meetingModeOpen && <section className="empty-hero" aria-labelledby={`${composerId}-welcome`}><div className="oa-ai-hero-kicker"><Bot size={16} />OA 助教</div><h2 id={`${composerId}-welcome`}>先问问题，也可以让它带你完成新手村</h2><p>可用于知识问答、资料整理、会议纪要、项目总结和任务拆解。上传文件后，回答可整理成 OA 审核资料。</p><div className="oa-ai-hero-grid">{quickActions.slice(0, 4).map(action => <button type="button" key={action.label} disabled={working} onClick={() => { setQuestion(action.prompt); input.current?.focus(); }}><strong>{action.label}</strong><span>{action.helper}</span></button>)}</div></section>}
+        {timeline.length === 0 && !meetingModeOpen && <section className="empty-hero" aria-labelledby={`${composerId}-welcome`}><div className="oa-ai-hero-kicker"><Bot size={16} />助研</div><h2 id={`${composerId}-welcome`}>想了解实验室的什么？</h2><p>从已审核的公开资料和您有权访问的内部资料中检索并回答。</p><div className="oa-ai-hero-grid">{quickActions.slice(0, 4).map(action => <button type="button" key={action.label} disabled={working} onClick={() => { setQuestion(action.prompt); input.current?.focus(); }}><strong>{action.label}</strong><span>{action.helper}</span></button>)}</div></section>}
         <OaMeetingMode ref={meetingMode} visible={meetingModeOpen} commandMeeting={meetingNumber} commandEpoch={meetingCommandEpoch} onRestore={() => setMeetingModeOpen(true)} onClose={() => setMeetingModeOpen(false)} onMinutes={(title, material, final, onAccepted) => {
           const instruction = final
             ? '@会议纪要 输出“会议全文”和“会议纪要”两部分；全文逐条保留发言人、时间和原文，纪要整理讨论要点、决策、行动项、负责人、截止日期、风险和未决问题。材料未明确的信息标注“待补充”。这是最终稿，生成后直接提交 OA 管理员审批。'
@@ -375,7 +382,7 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
           const turn = entry.turn;
           return <div className="oa-chat-turn" key={turn.id}>
           <article className="message user" title="右键复制问题" onContextMenu={event => { event.preventDefault(); void copyQuestion(turn); }}><div className="message-content"><p>{turn.question}</p></div></article>
-          {turn.answer && <article className="message assistant"><div className="message-content">{turn.streaming ? <><div className="oa-stream-draft" style={{ whiteSpace: 'pre-wrap' }}>{turn.answer}</div><small role="status">正在生成，终稿尚未完成核验</small></> : <RichAnswer answer={turn.answer} />}
+          {turn.answer && <article className="message assistant"><div className="message-content">{turn.streaming ? <><RichAnswer answer={turn.answer} /><small role="status">正在生成，终稿尚未完成核验</small></> : <RichAnswer answer={turn.answer} />}
             {!!turn.images.length && <div className="oa-answer-images">{turn.images.map(image => <OaAnswerImage key={image.url} image={image} />)}</div>}
             {!turn.streaming && !turn.failed && <div className="oa-answer-actions"><button type="button" className="copy-answer" onClick={() => void copy(turn)} aria-label="复制回答"><Copy size={15} />{copied === turn.id ? '已复制' : '复制'}</button><button type="button" aria-label="转发回答给成员" onClick={() => forward({ body: userFacingAnswer(turn.answer), omittedImages: turn.images.length })}><Forward size={15} />转发</button>{isAdmin && !turn.failed && <button type="button" className="oa-admin-edit-answer" onClick={() => setEditingTurn(turn)} aria-label="管理员修改回答"><Pencil size={15} />修改回答</button>}{!!turn.citations.length && <details><summary>参考已审核资料</summary>{turn.citations.map(citation => <p key={`${citation.id}-${citation.itemId}`}>{citation.title}{citation.sectionTitle ? ` · ${citation.sectionTitle}` : ''}</p>)}</details>}</div>}
           </div></article>}
@@ -385,14 +392,14 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
         {asking && <div className="knowledge-answer-loading" role="status">{streamPhase}</div>}
       </div>
       <div className="composer-area oa-chat-composer-area">
-        <div className="oa-chat-examples" role="group" aria-label="AI 助手五项功能"><p id={`${composerId}-capabilities`}>{adminModeActive ? '管理员模式已验证 · ' : ''}常用功能</p>{quickActions.map(action => action.label === '会议模式' ? <button type="button" key={action.label} title="@会议模式919700881" disabled={working} onClick={() => { setQuestion(meetingModePrompt); input.current?.focus(); }}><strong>{action.label}</strong><span>{action.helper}</span></button> : <button type="button" key={action.label} title={action.prompt} disabled={working} onClick={() => { if (action.label === '知识问答') documents.useSource(null); setQuestion(action.prompt); input.current?.focus(); }}><strong>{action.label}</strong><span>{action.helper}</span></button>)}</div>
+        <div className="oa-chat-examples" role="group" aria-label="每日推荐"><p id={composerId + "-capabilities"}>每日推荐</p>{researchRecommendations().map(prompt => <button type="button" key={prompt} disabled={working} onClick={() => { documents.useSource(null); setQuestion(''); input.current?.blur(); stickToEnd.current = true; void ask(undefined, prompt); }}>{prompt}</button>)}</div>
         {(error || documents.error) && <p className="oa-chat-error" role="alert">{error || documents.error}</p>}
         <OaDocumentSource documents={documents} />
         {meetingSuggestionVisible && <div id={`${composerId}-meeting-suggestion`} className="oa-chat-command-suggestions" role="listbox" aria-label="命令补全"><button type="button" role="option" aria-selected="true" onMouseDown={event => event.preventDefault()} onClick={() => { setQuestion('@会议模式919700881'); input.current?.focus(); }}><strong>@会议模式919700881</strong><span>默认联合项目周会 · 发送后直接启动</span></button></div>}
         <form className="composer oa-chat-composer" onSubmit={submit}>
-          <OaDocumentUpload documents={documents} disabled={asking} />
-          <label className="sr-only" htmlFor={composerId}>询问实验室大数据</label>
-          <textarea ref={input} id={composerId} aria-describedby={`${composerId}-capabilities`} aria-autocomplete="list" aria-controls={meetingSuggestionVisible ? `${composerId}-meeting-suggestion` : undefined} value={question} rows={1} maxLength={2000} placeholder="询问实验室大数据" onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (meetingSuggestionVisible && ['Enter', 'Tab'].includes(event.key) && !event.nativeEvent.isComposing) { event.preventDefault(); setQuestion('@会议模式919700881'); return; } if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void ask(); } }} />
+          <OaDocumentUpload documents={documents} disabled={asking} /><span className="oa-research-model">文本模型</span>
+          <label className="sr-only" htmlFor={composerId}>输入想了解的实验室问题</label>
+          <textarea ref={input} id={composerId} aria-describedby={`${composerId}-capabilities`} aria-autocomplete="list" aria-controls={meetingSuggestionVisible ? `${composerId}-meeting-suggestion` : undefined} value={question} rows={1} maxLength={2000} placeholder="输入想了解的实验室问题" onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (meetingSuggestionVisible && ['Enter', 'Tab'].includes(event.key) && !event.nativeEvent.isComposing) { event.preventDefault(); setQuestion('@会议模式919700881'); return; } if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void ask(); } }} />
           {/* Abort may synchronously replace the control. Cancel its default action
               before aborting and keep stop/send as separate DOM buttons. */}
           {asking ? <button key="stop" type="button" className="send-button" onClick={event => { event.preventDefault(); requestRef.current?.abort(); }} aria-label="停止等待回答"><Square size={18} /></button> : <button key="send" type="submit" className="send-button" disabled={documents.busy || question.trim().length < 2} aria-label="发送问题"><ArrowUp size={24} /></button>}
@@ -404,3 +411,9 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
   </section>;
 }
 
+
+function researchRecommendations() {
+ const prompts = ['介绍实验室当前的主要研究方向','实验室现有的机器人平台包括哪些','实验室有哪些代表性成果与应用','如何与实验室开展科研合作','OriginMind 怎样组织机器人的技能和任务？','根据我有权访问的内部资料总结项目进展','当前项目有哪些待验收事项？','整理内部资料中的机器人实验记录'];
+ const start = Math.floor((Date.now()+28800000)/86400000)%prompts.length;
+ return Array.from({length:4},(_,index)=>prompts[(start+index)%prompts.length]);
+}

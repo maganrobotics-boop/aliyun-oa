@@ -1,4 +1,5 @@
 "use client";
+import { OaResearchTools } from "@/components/oa-research-tools";
 
 /* This screen intentionally synchronizes remote OA state into local form/UI state. */
 /* eslint-disable react-hooks/set-state-in-effect */
@@ -65,8 +66,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { NotificationStatus } from "@/components/notification-status";
 import { OemInbox } from "@/components/oem-inbox";
 import { ProjectWorkspace } from "@/components/project-workspace";
-import { OaAiMemberDirectory, OaAiMemberProvider, OaAiChatButton, OaAiChatEntrances } from "@/components/ai-member-directory";
-import { OaPrimaryNavigation, OaQuickNavigation, type OaPrimaryView } from "@/components/oa-eight-entry-navigation";
+import { OaAiMemberDirectory, OaAiMemberProvider, OaAiChatEntrances, OaResearchWorkspace } from "@/components/ai-member-directory";
+import { OaPrimaryNavigation, type OaPrimaryView } from "@/components/oa-eight-entry-navigation";
 import { OaLibraryWorkspace } from "@/components/oa-library-workspace";
 import { CollaborationWorkspace, MailWorkspace } from "@/components/collaboration-workspace";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -76,7 +77,7 @@ import { KnowledgeView, type KnowledgeTab } from "@/components/knowledge/knowled
 import { OaChatStatus } from "@/components/knowledge/oa-chat-panel";
 import "./oa-workspace.css";
 import "@/components/oa-eight-entry.css";
-import { OaConversationProvider, OaConversationMenu, OaConversationTitle, useOaConversation } from "@/components/knowledge/oa-conversation-context";
+import { OaConversationProvider, OaConversationMenu, OaConversationTitle, OaNewChatButton, useOaConversation } from "@/components/knowledge/oa-conversation-context";
 import {
   NDA_AGREEMENT_VERSION,
   buildNdaAgreementText,
@@ -384,8 +385,8 @@ function Sidebar({ activeView, setActiveView, onNew, onProfile, userName = "马�
     </nav>
     </div>
     <div className="oa-sidebar-bottom">
-      <div className="oa-sidebar-links"><a href="https://omindos.ai" target="_blank" rel="noreferrer">官网 ↗</a>{isAdmin && <a href="/admin">管理</a>}<a href="/guide">使用指南</a></div>
-      <div className="oa-sidebar-bottom-row"><OaAiChatButton variant="sidebar" onOpen={onOpenChat} /><div className="sidebar-user-control">
+      <div className="oa-sidebar-links"><a href="https://omindos.ai" target="_blank" rel="noreferrer">官网 ↗</a>{isAdmin && <a href="/admin">管理</a>}</div>
+      <div className="oa-sidebar-bottom-row"><div className="sidebar-user-control">
         <button type="button" className="oa-sidebar-account" onClick={() => setUserMenuOpen(open => !open)} aria-expanded={userMenuOpen} aria-haspopup="menu" aria-label="打开个人账户菜单" title={userName}>{userAvatarDataUrl ? <img src={userAvatarDataUrl} alt="" /> : userName.slice(0, 1)}</button>
         {userMenuOpen && <div className="sidebar-user-popover" role="menu"><div className="oa-sidebar-account-copy"><strong>{userName}</strong><div className="sidebar-user-role">{sessionRoleLabel(currentRole, isAdmin)}</div></div><button type="button" role="menuitem" onClick={openProfile}><Settings2 className="size-3.5" />个人设置</button><button type="button" role="menuitem" className="logout-action" onClick={logout}><LogOut className="size-3.5" />退出登录</button></div>}
       </div></div>
@@ -2208,8 +2209,11 @@ function RulesView() {
 }
 
 export default function Home() {
-  const [activeView, setActiveView] = useState<ViewKey>("project");
-  const [primaryView, setPrimaryView] = useState<OaPrimaryView>("project");
+  const [mobileDirect, setMobileDirect] = useState(false);
+  useEffect(() => { const query = window.matchMedia('(max-width: 960px)'); const update = () => setMobileDirect(query.matches); update(); query.addEventListener('change', update); return () => query.removeEventListener('change', update); }, []);
+  const [activeView, setActiveView] = useState<ViewKey>("chat");
+  const [chatCreateRequest, setChatCreateRequest] = useState(0);
+  const [primaryView, setPrimaryView] = useState<OaPrimaryView>("model");
   const [knowledgeTab, setKnowledgeTab] = useState<KnowledgeTab>("ask");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   useEffect(() => { try { setSidebarCollapsed(localStorage.getItem("oa.sidebar.collapsed") === "true"); } catch { /* optional preference */ } }, []);
@@ -2271,7 +2275,7 @@ export default function Home() {
       setActiveView("profile");
       toast.info("GitHub 已经绑定", { description: "无需重复操作。" });
     } else if (githubStatus === "signed-in") {
-      setActiveView("home");
+      setActiveView("chat"); setPrimaryView("model");
       setShowMineOnly(false);
       setMobileNavOpen(false);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -2310,7 +2314,7 @@ export default function Home() {
       setActiveView("profile");
       toast.info("飞书已经绑定", { description: "无需重复操作。" });
     } else if (feishuStatus === "signed-in") {
-      setActiveView("home");
+      setActiveView("chat"); setPrimaryView("model");
       setShowMineOnly(false);
       setMobileNavOpen(false);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -2626,18 +2630,19 @@ export default function Home() {
   const archiveNoteSelected = (noticeType: "correction" | "void", note: string) => applyApplicantAction("archive_note", note, noticeType);
   const openDraftEditor = () => { if (!selectedApproval) return; const draft = selectedApproval; closeApproval(); setEditingDraft(draft); setRequestDialogEpoch((current) => current + 1); setNewOpen(true); };
   const openMyPending = () => { setActiveView("todos"); setActiveFilter("全部"); setShowMineOnly(false); setMobileNavOpen(false); };
-  const navigate = (view: ViewKey) => { setActiveView(view); if (["chat", "people", "project", "profile"].includes(view)) setPrimaryView(view as OaPrimaryView); setShowMineOnly(false); setMobileNavOpen(false); };
+  const navigate = (view: ViewKey) => { setActiveView(view); if (view === "project" || view === "todos") setPrimaryView("project"); else if (["dashboard", "requests", "members"].includes(view)) setPrimaryView("dashboard"); else if (view === "library") setPrimaryView("library"); else if (view === "chat") setPrimaryView("model"); setShowMineOnly(false); setMobileNavOpen(false); };
   const openMetricApproval = (id: string) => { setMetricPanel(null); openApproval(id); };
-  const secondaryTitle = activeView === "library" ? "资料库" : activeView === "home" ? "入组导览" : activeView === "chat" ? "消息" : activeView === "mail" ? "邮箱" : activeView === "dashboard" ? "审批工作台" : activeView === "todos" ? "统一待办" : activeView === "project" ? "工作台" : activeView === "requests" ? showMineOnly ? "待我审批" : "全部申请" : activeView === "people" ? "通讯录" : activeView === "knowledge" ? knowledgeTab === "ask" ? "AI 助手" : knowledgeTab === "submit" ? "上传资料" : knowledgeTab === "mine" ? "我的资料" : knowledgeTab === "review" ? "资料审核" : "知识资料管理" : activeView === "members" ? "成员审核" : activeView === "oem" ? "官网 OEM 申请" : activeView === "notifications" ? "飞书提醒" : activeView === "profile" ? "个人设置" : "流程与规则";
-  if (!session) return <div className="registration-shell"><div className="registration-card"><div className="registration-brand-lockup"><strong>{officialBrand}</strong><span>联合研发 OA</span></div><a className="oa-gate-guide-link" href="/guide"><BookOpen className="size-4" />项目章程与使用指南</a><h1>请登录账号</h1><p className="registration-intro">正在确认登录状态。实验室 AI 仅在登录并完成 OA 准入与保密签署后显示。</p></div></div>;
+  const isModelHeader = activeView === "chat" || (activeView === "knowledge" && knowledgeTab === "ask");
+  const secondaryTitle = activeView === "library" ? "资料库" : activeView === "home" ? "入组导览" : activeView === "chat" ? "消息" : activeView === "mail" ? "邮箱" : activeView === "dashboard" ? "审批工作台" : activeView === "todos" ? "统一待办" : activeView === "project" ? "工作台" : activeView === "requests" ? showMineOnly ? "待我审批" : "全部申请" : activeView === "people" ? "通讯录" : activeView === "knowledge" ? knowledgeTab === "ask" ? "AI 助手" : knowledgeTab === "submit" ? "上传资料" : knowledgeTab === "mine" ? "我的资料" : knowledgeTab === "review" ? "资料审核" : "知识资料管理" : activeView === "members" ? "成员审核" : activeView === "oem" ? "官网 OEM 申请" : activeView === "notifications" ? "飞书提醒" : activeView === "profile" ? "我的" : "流程与规则";
+  if (!session) return <div className="registration-shell"><div className="registration-card"><div className="registration-brand-lockup"><strong>{officialBrand}</strong><span>联合研发 OA</span></div><a className="oa-gate-guide-link" href="/guide"><BookOpen className="size-4" />项目章程与使用指南</a><h1>请登录账号</h1><p className="registration-intro">正在加载安全登录方式，请稍候。完成登录与 OA 准入后，实验室 AI 将自动显示。</p></div></div>;
   if (!session.registered && (session.accountBindingRequired || session.accountBindingConflict || session.platformIdentityMissing || session.externalIdentityLinkRequired || session.githubIdentityLinkRequired || session.feishuIdentityLinkRequired)) return <><Toaster position="top-right" /><IdentityAccessGate session={session} onRefresh={refreshSession} /></>;
   if (session.status === "pending") return <><Toaster position="top-right" /><PendingGate session={session} onRefresh={refreshSession} /></>;
   if (!session.registered) return <><Toaster position="top-right" /><RegistrationGate initialUser={session.user} initialStatus={session.status} chatgptLoginEnabled={session.chatgptLoginEnabled} githubLoginEnabled={session.githubLoginEnabled} feishuLoginEnabled={session.feishuLoginEnabled} onRegistered={setSession} /></>;
   if (needsNda) return <><Toaster position="top-right" /><NdaAdmissionGate key={ndaAdmissionIdentityKey(session.user?.email)} session={session} onRefresh={refreshSession} /></>;
   return (
-    <OaConversationProvider key={session.user?.email || "oa-member"} currentUser={session.user || undefined} visible={activeView === "knowledge" && knowledgeTab === "ask"} onOpenChat={() => { setKnowledgeTab("ask"); navigate("knowledge"); }}>
+    <OaConversationProvider key={session.user?.email || "oa-member"} currentUser={session.user || undefined} visible={(activeView === "knowledge" && knowledgeTab === "ask") || (mobileDirect && activeView === "chat")} onOpenChat={() => { setKnowledgeTab("ask"); navigate(mobileDirect ? "chat" : "knowledge"); }}>
     <OaAiMemberProvider onTeamChat={() => navigate("chat")}>
-    <div className={`oa-app oa-workspace ${sidebarCollapsed ? "oa-sidebar-collapsed" : ""} ${activeView === "knowledge" && knowledgeTab === "ask" ? "oa-chat-open" : ""}`}>
+    <div className={`oa-app oa-workspace ${mobileDirect && activeView === "chat" ? "oa-mobile-research" : ""} ${mobileDirect && activeView === "library" ? "oa-mobile-library" : ""} ${sidebarCollapsed ? "oa-sidebar-collapsed" : ""} ${activeView === "knowledge" && knowledgeTab === "ask" ? "oa-chat-open" : ""}`}>
       <Toaster position="top-right" />
       <button type="button" className={`mobile-nav-overlay ${mobileNavOpen ? "visible" : ""}`} onClick={() => { setMobileNavOpen(false); mobileMenuButtonRef.current?.focus(); }} aria-label="关闭导航" aria-hidden={!mobileNavOpen} tabIndex={mobileNavOpen ? 0 : -1} />
       <div ref={mobileSidebarRef} id="mobile-navigation" className={`mobile-sidebar ${mobileNavOpen ? "open" : ""}`} role="dialog" aria-modal="true" aria-label="移动导航" aria-hidden={!mobileNavOpen}>
@@ -2645,20 +2650,19 @@ export default function Home() {
       </div>
       <div id="oa-desktop-navigation" className="oa-desktop-navigation"><Sidebar activeView={activeView} setActiveView={navigate} onNew={openNewRequest} onProfile={() => navigate("profile")} userName={session.user?.displayName} userAvatarDataUrl={myAvatarDataUrl} authProvider={session.user?.authProvider} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} canReviewKnowledge={Boolean(session.canReviewKnowledge)} selectedKnowledgeTab={knowledgeTab} onKnowledgeTab={(tab) => { setKnowledgeTab(tab); navigate("knowledge"); }} onMyPending={openMyPending} onOpenChat={() => setMobileNavOpen(false)} /></div>
       <main className="main-shell">
-        <header className="topbar">
+        <header className={isModelHeader ? "oa-model-chat-header" : "topbar"}>
           <button type="button" className="workspace-sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"} aria-expanded={!sidebarCollapsed} aria-controls="oa-desktop-navigation"><Menu className="size-5" /></button>
           <button ref={mobileMenuButtonRef} className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="打开导航" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation"><Menu className="size-5" /></button>
-          <OaConversationTitle><div className="oa-topbar-secondary-title"><strong>{secondaryTitle}</strong>{activeView === "knowledge" && knowledgeTab === "ask" && <OaChatStatus />}</div></OaConversationTitle>
-          <div className="topbar-actions">
-            <OaAiChatButton />
-            <OaConversationMenu />
+          {isModelHeader ? <div className="oa-model-chat-title">机器人自主移动与操作实验室</div> : <OaConversationTitle><div className="oa-topbar-secondary-title"><span className="oa-lab-title">机器人自主移动与操作实验室</span><strong>{secondaryTitle}</strong></div></OaConversationTitle>}
+          <div className={isModelHeader ? "oa-model-chat-actions" : "topbar-actions"}>{isModelHeader && <OaNewChatButton />}
+
+
           </div>
         </header>
-        <OaQuickNavigation active={["dashboard", "requests", "todos"].includes(activeView) ? "approval" : activeView === "knowledge" && knowledgeTab === "submit" ? "upload" : activeView === "library" || (activeView === "knowledge" && ["mine", "manage"].includes(knowledgeTab)) ? "library" : undefined} hidden={activeView === "knowledge" && knowledgeTab === "ask"} onApproval={() => navigate("dashboard")} onUpload={() => { setKnowledgeTab("submit"); navigate("knowledge"); }} onLibrary={() => navigate("library")} />
         <div className="project-pane" hidden={activeView !== "project" && activeView !== "todos"}><ProjectWorkspace mode={activeView === "todos" ? "todos" : "project"} approvals={approvals} approvalsReady={dataReady} currentUserEmail={session.user?.email} people={session.user ? [{ email: session.user.email, name: session.user.displayName }] : []} canReviewKnowledge={Boolean(session.canReviewKnowledge)} canManageProject={Boolean(session.isAdmin || session.role === "project_owner")} onOpenApproval={openApproval} onOpenKnowledgeReview={() => { setKnowledgeTab("review"); navigate("knowledge"); }} onOpenLibrary={() => navigate("library")} /></div>
         {activeView === "profile" && <nav className="oa-my-tools" aria-label="我的工具"><button type="button" onClick={() => navigate("todos")}>我的待办</button><button type="button" onClick={() => { setKnowledgeTab("mine"); navigate("knowledge"); }}>我的资料</button><button type="button" onClick={() => navigate("mail")}>邮箱</button><button type="button" onClick={() => navigate("home")}>入组导览</button><button type="button" onClick={() => navigate("rules")}>流程规则</button>{session.isAdmin && <><button type="button" onClick={() => navigate("members")}>成员审核</button><button type="button" onClick={() => navigate("notifications")}>飞书提醒</button><a href="/admin">系统管理</a></>}</nav>}
-        <div className="oa-knowledge-pane" hidden={activeView !== "knowledge"}><KnowledgeView canReviewKnowledge={Boolean(session.canReviewKnowledge)} isAdmin={Boolean(session.isAdmin)} activeSection={knowledgeTab} onSectionChange={setKnowledgeTab} /></div>
-        {activeView === "library" ? <OaLibraryWorkspace canManage={Boolean(session.canReviewKnowledge)} onMine={() => { setKnowledgeTab("mine"); navigate("knowledge"); }} onManage={() => { setKnowledgeTab("manage"); navigate("knowledge"); }} /> : activeView === "home" ? <StudentHomeView session={session} onNavigate={navigate} onOpenNewRequest={openNewRequest} /> : activeView === "chat" ? <><OaAiChatEntrances /><CollaborationWorkspace currentUserEmail={session.user?.email} /></> : activeView === "mail" ? <MailWorkspace /> : activeView === "notifications" ? <NotificationStatus /> : activeView === "oem" ? <OemInbox /> : activeView === "members" ? <MembersView currentEmail={session.user?.email} /> : activeView === "people" ? <PeopleView currentUser={session.user} canManageDepartments={Boolean(session.isAdmin)} /> : activeView === "knowledge" ? null : activeView === "todos" || activeView === "project" ? null : activeView === "profile" ? <ProfileSettingsView currentUser={session.user} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} migrationExportEnabled={session.migrationExportEnabled} migrationUnfreezeEnabled={session.migrationUnfreezeEnabled} onIdentityChanged={(fullName, avatarDataUrl) => { setMyAvatarDataUrl(avatarDataUrl); setSession((current) => current?.user ? { ...current, user: { ...current.user, displayName: fullName } } : current); }} /> : activeView === "rules" ? <RulesView /> : activeView === "requests" ? <RequestsView approvals={approvals} filteredApprovals={filteredApprovals} myPendingApprovals={myPendingApprovals} dataReady={dataReady} activeFilter={activeFilter} setActiveFilter={setActiveFilter} showMineOnly={showMineOnly} onClearMine={() => setShowMineOnly(false)} onOpen={openApproval} /> : <>
+        <div className="oa-knowledge-pane" hidden={activeView !== "knowledge" && !(mobileDirect && ["library", "chat"].includes(activeView))}><KnowledgeView canReviewKnowledge={Boolean(session.canReviewKnowledge)} isAdmin={Boolean(session.isAdmin)} activeSection={mobileDirect && activeView === "library" ? "submit" : mobileDirect && activeView === "chat" ? "ask" : knowledgeTab} onSectionChange={(tab) => { setKnowledgeTab(tab); if (activeView === "library") navigate("knowledge"); }} /></div>
+        {activeView === "library" ? <><div className="oa-section-actions"><button type="button" onClick={() => { setKnowledgeTab("submit"); setPrimaryView("library"); navigate("knowledge"); }}>上传资料</button></div><OaLibraryWorkspace canManage={Boolean(session.canReviewKnowledge)} onMine={() => { setKnowledgeTab("mine"); navigate("knowledge"); }} onManage={() => { setKnowledgeTab("manage"); navigate("knowledge"); }} /></> : activeView === "home" ? <StudentHomeView session={session} onNavigate={navigate} onOpenNewRequest={openNewRequest} /> : activeView === "chat" ? (mobileDirect ? null : <><div className="oa-model-entrances"><button type="button" onClick={() => { setKnowledgeTab("ask"); setPrimaryView("model"); navigate("knowledge"); }}>实验室内部大模型</button><a href="https://chat.omindos.cn/" target="_blank" rel="noreferrer">实验室对外大模型 ↗</a></div><OaAiChatEntrances /><CollaborationWorkspace currentUserEmail={session.user?.email} createRequest={chatCreateRequest} /></>) : activeView === "mail" ? <MailWorkspace /> : activeView === "notifications" ? <NotificationStatus /> : activeView === "oem" ? <OemInbox /> : activeView === "members" ? <MembersView currentEmail={session.user?.email} /> : activeView === "people" ? <PeopleView currentUser={session.user} canManageDepartments={Boolean(session.isAdmin)} /> : activeView === "knowledge" ? null : activeView === "todos" || activeView === "project" ? null : activeView === "profile" ? <ProfileSettingsView currentUser={session.user} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} migrationExportEnabled={session.migrationExportEnabled} migrationUnfreezeEnabled={session.migrationUnfreezeEnabled} onIdentityChanged={(fullName, avatarDataUrl) => { setMyAvatarDataUrl(avatarDataUrl); setSession((current) => current?.user ? { ...current, user: { ...current.user, displayName: fullName } } : current); }} /> : activeView === "rules" ? <RulesView /> : activeView === "requests" ? <RequestsView approvals={approvals} filteredApprovals={filteredApprovals} myPendingApprovals={myPendingApprovals} dataReady={dataReady} activeFilter={activeFilter} setActiveFilter={setActiveFilter} showMineOnly={showMineOnly} onClearMine={() => setShowMineOnly(false)} onOpen={openApproval} /> : <>
           <section className="page-heading dashboard-heading">
             <div>
               <div className="eyebrow"><span className="eyebrow-line" />{officialName}</div>
@@ -2677,7 +2681,7 @@ export default function Home() {
           <FlowCard />
         </>}
       </main>
-      <OaPrimaryNavigation active={primaryView} onNavigate={navigate} />
+      <OaPrimaryNavigation active={primaryView} onNavigate={(view) => navigate(view === "model" ? "chat" : view)} />
       <NewRequestDialog key={requestDialogEpoch} open={newOpen} onOpenChange={setNewOpen} onCreate={createApproval} approvals={approvals} currentUser={session.user} currentRole={session.role} isAdmin={session.isAdmin} draft={editingDraft} onDraftConsumed={() => setEditingDraft(null)} />
       <DetailSheet approval={selectedApproval} events={detailEvents} loading={detailLoading} error={detailError} currentEmail={session.user?.email} isAdmin={session.isAdmin} open={Boolean(selectedId)} onOpenChange={(open) => { if (!open) closeApproval(); }} onRetry={retryApprovalDetail} onApprove={approveSelected} onConfirmPurchase={confirmPurchaseSelected} onReturn={returnSelected} onForceReturn={forceReturnSelected} onResubmit={resubmitSelected} onWithdraw={withdrawSelected} onVoid={voidSelected} onArchiveNote={archiveNoteSelected} onEditDraft={openDraftEditor} />
       <MetricDialog panel={metricPanel} approvals={approvals} monthlyApproved={monthlyApproved} archiveRatio={archiveRatio} onOpenApproval={openMetricApproval} onOpenChange={setMetricPanel} />

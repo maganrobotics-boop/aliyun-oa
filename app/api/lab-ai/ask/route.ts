@@ -61,7 +61,7 @@ export async function POST(request: Request) {
   const timings: RequestTimings = {};
   const finish = (response: Response) => withServerTiming(response, timings, totalStartedAt);
   const authorized = await getAuthorizedUser();
-  if (!authorized) return finish(privateJson({ error: "请先完成成员注册。" }, { status: 401 }));
+  if (!authorized) return finish(privateJson({ error: "登录状态已失效或当前账号尚未获准访问，请重新登录后重试。" }, { status: 401 }));
   if (authorized.isAdmin !== true && !authorized.ndaCompleted) return finish(privateJson({ error: "请先完成保密协议签署与归档。" }, { status: 403 }));
   if (!authorized.memberId || !authorized.accountUserId || !authorized.memberMutationRevision) return finish(privateJson({ error: "知识问答仅向已激活、实名绑定的 OA 成员开放。" }, { status: 403 }));
   const origin = request.headers.get("origin");

@@ -4,6 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { Bot, CheckCircle2, CircleDot, FileText, LogOut, RotateCcw, X } from 'lucide-react';
 import { buildMeetingMinutesMaterial, isMeetingModeSession, meetingModeStorageKey, type MeetingModeSession, type MeetingTranscriptItem } from '@/lib/oa-meeting-mode.mjs';
 import { OaRichAnswer } from './oa-rich-answer';
+import { consumeOaAnswerStream } from '@/lib/oa-native-stream.mjs';
 import { useOaConversation } from './oa-conversation-context';
 import './oa-meeting-mode.css';
 
@@ -62,6 +63,9 @@ export const OaMeetingMode = forwardRef<OaMeetingModeHandle, Props>(function OaM
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('发送 @会议模式加九位会议号，即可让 OA 助手入会。');
   const [liveMinutes, setLiveMinutes] = useState('');
+  const [meetingInput, setMeetingInput] = useState('');
+  const [manualTitle, setManualTitle] = useState('');
+  const [manualMaterial, setManualMaterial] = useState('');
   const [minutesUpdating, setMinutesUpdating] = useState(false);
   const summarizedTranscriptCount = useRef(0);
   const lastSummaryAt = useRef(0);
@@ -228,8 +232,16 @@ export const OaMeetingMode = forwardRef<OaMeetingModeHandle, Props>(function OaM
       const material = current.transcript.slice(-24).map(item => `${item.speaker}：${item.text}`).join('\n').slice(-1800);
       setMinutesUpdating(true);
       try {
-        const response = await fetch('/api/lab-ai/ask', { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ question: `只根据以下实时会议字幕，生成简洁的中文实时纪要。按“讨论要点、决定、行动项、风险与未决问题”组织；没有的信息写“暂无”，不得编造。\n\n${material}`, history: [] }), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60000)]) });
-        const data = await response.json().catch(() => ({})) as { answer?: string; error?: string };
+        const response = await fetch('/api/lab-ai/ask', { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'content-type': 'application/json', accept: 'text/event-stream' }, body: JSON.stringify({ question: `只根据以下实时会议字幕，生成简洁的中文实时纪要。按“讨论要点、决定、行动项、风险与未决问题”组织；没有的信息写“暂无”，不得编造。\n\n${material}`, history: [] }), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60000)]) });
+        let data: { answer?: string; error?: string };
+        if (response.headers.get('content-type')?.split(';', 1)[0] === 'text/event-stream') {
+          setLiveMinutes('');
+          data = await consumeOaAnswerStream(response, { signal: controller.signal, onEvent(event) {
+            if (controller.signal.aborted) return;
+            if (event.type === 'reset') setLiveMinutes('');
+            else if (event.type === 'delta') setLiveMinutes(previous => previous + event.delta);
+          } }) as { answer?: string; error?: string };
+        } else data = await response.json().catch(() => ({})) as { answer?: string; error?: string };
         if (!response.ok || !data.answer?.trim()) throw new Error(data.error || '实时纪要暂未生成。');
         if (!controller.signal.aborted) { setLiveMinutes(data.answer.trim()); summarizedTranscriptCount.current = current.transcript.length; lastSummaryAt.current = Date.now(); }
       } catch (cause) {
@@ -292,6 +304,19 @@ export const OaMeetingMode = forwardRef<OaMeetingModeHandle, Props>(function OaM
   }, [session.phase, remoteEnded, finish]);
   useImperativeHandle(ref, () => ({ end: finish, minutes: generateLiveMinutes }), [finish, generateLiveMinutes]);
 
+  const submitManualMeeting = () => {
+    if (mutationBusy.current || sessionRef.current.phase !== 'draft') return;
+    const text = manualMaterial.trim();
+    if (text.length < 10) { setError('请粘贴至少 10 个字的会议记录或转写。'); return; }
+    if (text.length > 16000) { setError('本次最多整理 16,000 字，请按议题分段提交。'); return; }
+    const now = new Date().toISOString();
+    const transcript: MeetingTranscriptItem[] = [];
+    for (let offset = 0; offset < text.length; offset += 3500) transcript.push({ id: crypto.randomUUID(), speaker: '导入会议记录（原文）', text: text.slice(offset, offset + 3500), time: now });
+    const completed: MeetingModeSession = { ...emptySession(manualTitle.trim() || '助研会议纪要'), meeting: '导入文字记录（未接入音频）', phase: 'generating_minutes', endedAt: now, exitStatus: 'confirmed', transcript };
+    sessionRef.current = completed; setSession(completed); setError('');
+    submitMinutes(completed);
+  };
+
   const reset = () => {
     if (session.phase === 'in_meeting' || session.phase === 'waiting_to_join') return;
     try { sessionStorage.removeItem(storageKey); } catch { /* Best effort. */ }
@@ -312,6 +337,11 @@ export const OaMeetingMode = forwardRef<OaMeetingModeHandle, Props>(function OaM
     {session.phase === 'draft' || session.phase === 'waiting_to_join' ? <div className="oa-meeting-compact-start">
       <p>{session.phase === 'waiting_to_join' ? `正在连接飞书会议 ${session.meeting}，请主持人在飞书中放行机器人。` : '在下方聊天框发送 @会议模式加九位会议号，例如 @会议模式919700881。发送即确认已告知参会人 OA 助手将记录会议。'}</p>
       {session.phase === 'waiting_to_join' && <button type="button" className="oa-meeting-recovery" disabled={busy} onClick={clearJoinLock}><RotateCcw size={17} />确认机器人未入会，解除锁定</button>}
+      {session.phase === 'draft' && <div className="oa-meeting-start-options">
+        <section><h3>接入飞书会议</h3><label>九位会议号<input aria-label="飞书会议号" inputMode="numeric" maxLength={9} value={meetingInput} onChange={event => setMeetingInput(event.target.value.replace(/[^0-9]/g, ''))} placeholder="请输入本次会议号" /></label><button type="button" disabled={busy || !/^[0-9]{9}$/.test(meetingInput)} onClick={() => void start(meetingInput)}>已告知参会人，接入会议</button><p>需飞书入会和转写服务可用；只有收到真实会议事件后才显示记录。</p></section>
+        <section><h3>整理已有会议记录</h3><label>会议主题<input aria-label="会议主题" maxLength={100} value={manualTitle} onChange={event => setManualTitle(event.target.value)} placeholder="例如：联合研发项目周会" /></label><label>会议记录或转写<textarea aria-label="会议记录或转写" rows={7} maxLength={16000} value={manualMaterial} onChange={event => setManualMaterial(event.target.value)} placeholder="粘贴发言、讨论和决定。保留原文中的发言人和时间；未明确的负责人、截止日期会标为待补充。" /></label><button type="button" disabled={busy || manualMaterial.trim().length < 10} onClick={submitManualMeeting}>生成纪要与行动项并保存</button><p>生成结果自动提交 OA 审批；此入口不录音，也不会自动加入飞书。</p></section>
+
+      </div>}
     </div> : <div className="oa-meeting-console">
       <section className="oa-meeting-summary"><div><small>{session.startedAt ? new Date(session.startedAt).toLocaleString('zh-CN') : '尚未开始'} · {session.observedParticipants.length} 位已识别参会人</small></div><span><CircleDot size={14} />{active ? remoteEnded ? '飞书已结束' : '记录中' : phaseLabels[session.phase]}</span></section>
       {active && <div className="oa-meeting-live-view">

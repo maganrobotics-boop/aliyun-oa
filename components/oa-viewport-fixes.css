@@ -1,0 +1,24 @@
+/* Keep chat above the measured navigation; visualViewport tracks soft keyboards. */
+@media(max-width:960px) {
+  .oa-app.oa-workspace:is(.oa-chat-open,.oa-mobile-research) > .main-shell {
+    position:fixed!important; top:var(--oa-visible-top,0px)!important; left:0; right:0;
+    height:calc(var(--oa-visible-height,100dvh) - var(--oa-nav-height,66px))!important;
+    min-height:0!important; max-height:none!important; padding-bottom:0!important;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .oa-app.oa-workspace:is(.oa-chat-open,.oa-mobile-research) .oa-primary-navigation {
+    bottom:var(--oa-keyboard-inset,0px)!important;
+  }
+  .oa-app.oa-workspace:is(.oa-chat-open,.oa-mobile-research) .oa-knowledge-pane {
+    flex:1 1 0!important; min-height:0!important; height:auto!important; overflow:hidden;
+  }
+  .oa-app.oa-workspace:is(.oa-chat-open,.oa-mobile-research) .oa-chat-composer-area {
+    flex-shrink:0!important; max-height:60%; overflow-y:auto; overscroll-behavior:contain;
+  }
+  .oa-ai-interaction:not(.oa-research-inline) {
+    top:calc(var(--oa-visible-top,0px) + 8px)!important; transform:translateX(-50%)!important;
+    max-height:calc(var(--oa-visible-height,100dvh) - 16px)!important;
+  }
+  .oa-ai-interaction-content { min-height:0!important; }
+  .oa-ai-message-composer { flex-shrink:0; }
+}

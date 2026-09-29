@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import postcss from 'postcss';
 import ts from 'typescript';
+import { extendOaRenderer } from './oa-renderer-extension.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = name => readFile(path.join(root, name), 'utf8');
@@ -53,11 +54,12 @@ if (mathNames.length !== 1) throw new Error('Expected exactly one verified Chat 
 const mathName = mathNames[0];
 const mathBytes = await readFile(path.join(root, 'chat-cloudflare/public/assets', mathName));
 if (!mathName.includes(createHash('sha256').update(mathBytes).digest('hex').slice(0, 16))) throw new Error('Chat math asset digest mismatch');
-const renderer = source.statements.filter(statement => selected.has(statement)).map(statement => statement.getFullText(source)).join('\n')
+let renderer = source.statements.filter(statement => selected.has(statement)).map(statement => statement.getFullText(source)).join('\n')
   .replaceAll('__KATEX_ASSET__', `/assets/${mathName}`).replaceAll('import(url)', 'import(/* @vite-ignore */ url)');
+renderer = extendOaRenderer(renderer, mathName);
 if (/\b(?:localStorage|sessionStorage)\b/u.test(renderer)) throw new Error('Shared answer renderer must not access conversation storage');
 await writeFile(path.join(root, 'lib/oa-chat-renderer.mjs'), `/* Generated from Chat's DOM-safe answer renderer; do not edit. */\n/* eslint-disable */\n${renderer}\nexport { renderAnswerBody, userFacingAnswer };\n`);
-await writeFile(path.join(root, 'lib/oa-chat-renderer.d.mts'), 'export function renderAnswerBody(answer: string): HTMLElement;\nexport function userFacingAnswer(answer: string): string;\n');
+await writeFile(path.join(root, 'lib/oa-chat-renderer.d.mts'), 'export function renderAnswerBody(answer: string, assets?: readonly { path: string; url: string }[]): HTMLElement;\nexport function userFacingAnswer(answer: string): string;\n');
 await mkdir(path.join(root, 'public/assets'), { recursive: true });
 await copyFile(path.join(root, 'chat-cloudflare/public/assets', mathName), path.join(root, 'public/assets', mathName));
 await copyFile(path.join(root, 'chat-cloudflare/public/LICENSES.md'), path.join(root, 'public/assets/oa-chat-LICENSES.md'));

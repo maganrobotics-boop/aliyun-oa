@@ -35,6 +35,7 @@ class D1PreparedAdapter {
 export class D1DatabaseAdapter {
   constructor() {
     this.sqlite = new DatabaseSync(":memory:");
+    this.sqlite.exec("CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);");
     const migrations = readdirSync(new URL("../migrations/", import.meta.url))
       .filter((name) => /^\d+_.+\.sql$/u.test(name))
       .sort((left, right) => {

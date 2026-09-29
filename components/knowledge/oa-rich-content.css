@@ -1,0 +1,21 @@
+/* Rich content is shared by knowledge detail, review, and private AI chat. */
+.oa-rich-answer { min-width:0; max-width:100%; white-space:normal; overflow-wrap:anywhere; line-height:1.8; }
+.oa-rich-answer .answer-content { min-width:0; max-width:100%; }
+.oa-rich-answer p { margin:.65em 0; white-space:normal; }
+.oa-rich-answer :is(h1,h2,h3,h4,h5,h6) { font-weight:650; line-height:1.5; margin:1.1em 0 .5em; }
+.oa-rich-answer :is(ul,ol) { padding-inline-start:1.6em; margin:.7em 0; }
+.oa-rich-answer ul { list-style:disc; }
+.oa-rich-answer ol { list-style:decimal; }
+.oa-rich-answer li { margin:.3em 0; }
+.oa-rich-answer table { display:block; width:max-content; max-width:100%; overflow:auto; border-collapse:collapse; margin:.8em 0; }
+.oa-rich-answer :is(th,td) { padding:.45em .7em; border:1px solid #dce2e8; text-align:start; }
+.oa-rich-answer th { background:#f4f6f8; font-weight:650; }
+.oa-rich-answer pre { max-width:100%; overflow:auto; white-space:pre; padding:12px; border-radius:8px; background:#f3f5f7; }
+.oa-rich-answer code { font-family:ui-monospace,monospace; font-size:.9em; }
+.oa-rich-answer a { text-decoration:underline; text-underline-offset:3px; }
+.oa-rich-answer .oa-knowledge-image { display:block; width:auto; max-width:100%; height:auto; margin:12px 0; border-radius:6px; }
+.oa-rich-answer .oa-image-unavailable { display:inline-block; font-size:.9em; padding:4px 8px; border:1px dashed #b5bdc5; }
+.oa-rich-answer .math-display { display:block; max-width:100%; overflow-x:auto; margin:.8em 0; padding:4px 0; }
+.oa-rich-answer math { font-size:1.12em; }
+.oa-rich-answer .math-inline { display:inline; }
+.oa-rich-answer [data-math-status=fallback] { overflow-wrap:anywhere; }

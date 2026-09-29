@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Bot, Check, MessageCircle, MoreHorizontal, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Bot, Check, MessageCircle, MoreHorizontal, Plus, RotateCcw, Trash2, UsersRound } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { DIRECT_MESSAGE_MAX_LENGTH } from '@/lib/direct-message-contract.mjs';
@@ -61,11 +61,12 @@ export function OaConversationTitle({ children }: { children: ReactNode }) {
   const { peer } = useOaConversation();
   return peer ? <div className="oa-topbar-secondary-title oa-member-title"><strong>{peer.name}</strong><small>成员私聊</small></div> : children;
 }
-export function OaConversationMenu() {
+type WorkspaceMenuProps = { aiChoices?: import("react").ReactNode; onCreateGroup?: () => void };
+export function OaConversationMenu(props: WorkspaceMenuProps) {
   const chat = useOaConversation();
-  return <ConversationMenu key={chat.user.email} />;
+  return <ConversationMenu key={chat.user.email} {...props} />;
 }
-function ConversationMenu() {
+function ConversationMenu({ aiChoices, onCreateGroup }: WorkspaceMenuProps) {
   const chat = useOaConversation();
   const userEmail = chat.user.email;
   const focusComposerAfterClose = useRef(false);
@@ -100,10 +101,10 @@ function ConversationMenu() {
     focusComposerAfterClose.current = false;
     window.requestAnimationFrame(focusComposer);
   }}>
-    <SheetHeader><SheetTitle>聊天</SheetTitle><SheetDescription>选择 AI 助手或成员聊天</SheetDescription></SheetHeader>
+    <SheetHeader><SheetTitle>聊天</SheetTitle><SheetDescription>选择一位成员单聊，或选择多人和 AI 建群</SheetDescription></SheetHeader>
     <nav className="oa-conversation-drawer-list" aria-label="聊天列表">
-      <button type="button" aria-current={!chat.peer ? 'true' : undefined} onClick={() => navigate(chat.showAi)}><Bot /><span>AI 助手</span>{!chat.peer && <Check aria-hidden="true" />}</button>
-      {loadingMembers && <p role="status">正在加载成员…</p>}
+      {aiChoices}
+      <button type="button" onClick={() => navigate(() => onCreateGroup?.())}><UsersRound aria-hidden="true" /><span>多人聊天 / 建群</span></button>{loadingMembers && <p role="status">正在加载成员…</p>}
       {memberError && <button type="button" onClick={() => { resetMemberLoading(); setReload(value => value + 1); }}><RotateCcw /><span>{memberError}</span></button>}
       {!loadingMembers && !memberError && !members.length && <p>暂无可聊天成员</p>}
       {members.map(member => <button type="button" key={member.email} aria-label={member.name} title={member.name} aria-current={chat.peer?.email === member.email ? 'true' : undefined} onClick={() => navigate(() => chat.openPeer(member))}><MessageCircle /><span>{member.name}</span>{chat.peer?.email === member.email && <Check aria-hidden="true" />}</button>)}
@@ -113,7 +114,7 @@ function ConversationMenu() {
 }
 export function OaNewChatButton() {
   const { newAi } = useOaConversation();
-  return <button type="button" className="oa-sidebar-new-chat" onClick={newAi}><Plus size={18} />聊天</button>;
+  return <button type="button" className="oa-sidebar-new-chat" aria-label="新建 AI 对话" onClick={newAi}><Plus size={18} />聊天</button>;
 }
 
 function MemberPicker({ content, user, onClose, onSelect, onSent }: { content: ForwardContent | null; user: CurrentUser; onClose: () => void; onSelect: (peer: ConversationPeer) => void; onSent: (peer: ConversationPeer) => void }) {
