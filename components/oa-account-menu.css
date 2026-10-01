@@ -1,0 +1,81 @@
+.oa-account-root{position:relative;flex:none;display:block}
+.oa-account-trigger{appearance:none;display:flex;align-items:center;gap:7px;min-height:40px;padding:5px 9px;border:1px solid transparent;border-radius:24px;background:transparent;color:#172b3a;cursor:pointer;white-space:nowrap}
+.oa-account-trigger:hover,.oa-account-trigger[data-state="open"]{background:#edf3f7;border-color:#dfe7ed}
+.oa-account-trigger:disabled{opacity:.6;cursor:wait}
+.oa-account-avatar{display:grid;place-items:center;flex:none;width:29px;height:29px;border-radius:50%;background:#e7eff6;color:#315672;font-size:13px;font-weight:650;overflow:hidden}
+.oa-account-avatar img{width:100%;height:100%;object-fit:cover}
+.oa-account-name{max-width:112px;overflow:hidden;text-overflow:ellipsis;font-size:14px;font-weight:600}
+.oa-account-popover{z-index:100;width:300px;max-width:calc(100vw - 24px);max-height:var(--radix-popover-content-available-height);overflow:auto;padding:8px;border:1px solid #dfe6eb;border-radius:18px;background:#fff;color:#172b3a;box-shadow:0 12px 42px #18344924;overscroll-behavior:contain}
+.oa-account-panel{width:380px;padding:16px}
+.oa-account-identity{display:flex;align-items:center;gap:12px;padding:12px 10px 16px;border-bottom:1px solid #e0e7ed;margin-bottom:5px}
+.oa-account-identity>.oa-account-avatar{width:40px;height:40px;font-size:17px}
+.oa-account-identity>div{min-width:0}.oa-account-identity strong{display:block;font-size:16px;overflow-wrap:anywhere}
+.oa-account-identity small,.oa-account-muted{color:#637486;font-size:13px;line-height:1.65}
+.oa-account-actions button,.oa-account-logout{appearance:none;display:flex;align-items:center;gap:12px;width:100%;min-height:44px;border:0;padding:10px 12px;border-radius:10px;background:transparent;color:#172b3a;text-align:left;font-size:14px;font-weight:500;cursor:pointer}
+.oa-account-actions button:hover,.oa-account-logout:hover{background:#edf4f7}
+.oa-account-logout:disabled{opacity:.6;cursor:wait}.oa-account-divider{height:1px;background:#e0e7ed;margin:6px 10px}
+.oa-account-popover button:focus-visible,.oa-account-popover a:focus-visible,.oa-account-trigger:focus-visible,.oa-login-workspace button:focus-visible,.oa-login-workspace a:focus-visible{outline:2px solid #3269a6;outline-offset:2px}
+.oa-account-panel-heading{display:flex;align-items:center;gap:8px;border-bottom:1px solid #e0e7ed;padding-bottom:12px;margin-bottom:14px}
+.oa-account-panel-heading h2{flex:1;margin:0;font-size:17px;font-weight:650}
+.oa-account-panel-heading button{display:grid;place-items:center;flex:none;width:36px;height:36px;padding:0;border:0;border-radius:8px;background:transparent;color:#476174;cursor:pointer}
+.oa-account-panel-heading button:hover{background:#edf4f7}
+.oa-account-panel-body{min-width:0}.oa-account-panel-body>p{margin:0 0 14px}
+.oa-preference-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 0;border-bottom:1px solid #e7edf2;cursor:pointer}
+.oa-preference-row strong{display:block;font-size:14px;font-weight:600}.oa-preference-row small{display:block;color:#637486;font-size:12px;line-height:1.6;margin-top:3px}
+.oa-preference-row input{width:20px;height:20px;flex:none;accent-color:#3269a6}
+.oa-account-secondary,.oa-account-link{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:44px;margin-top:14px;padding:10px 14px;border:1px solid #d5e1eb;border-radius:10px;background:#f6f9fc;color:#315b80;font-size:14px;text-decoration:none;cursor:pointer}
+.oa-account-details{margin:0}.oa-account-details>div{display:flex;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid #e7edf2;font-size:14px;line-height:1.6}
+.oa-account-details dt{flex:none;color:#637486}.oa-account-details dd{margin:0;text-align:right;overflow-wrap:anywhere}
+.oa-account-status{margin:12px 4px 4px;color:#315b80;font-size:13px;line-height:1.6}
+.oa-account-profile-panel{width:340px;padding:14px}
+.oa-account-profile-panel .oa-account-panel-heading{padding-bottom:8px;margin-bottom:10px}
+.oa-account-profile-panel .oa-account-panel-heading h2{font-size:15px}
+.oa-profile-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:0;min-width:0;border:0}
+.oa-profile-fields label{display:flex;flex-direction:column;gap:5px;min-width:0}
+.oa-profile-fields label>span{color:#637486;font-size:12px;line-height:1.4}
+.oa-profile-wide{grid-column:1/-1}
+.oa-profile-fields input,.oa-profile-fields textarea{box-sizing:border-box;width:100%;min-width:0;margin:0;padding:7px 9px;border:1px solid #d6e0e8;border-radius:8px;background:#fff;color:#172b3a;font:inherit;font-size:14px;line-height:1.5}
+.oa-profile-fields input{height:36px}.oa-profile-fields textarea{min-height:62px;max-height:160px;resize:vertical}
+.oa-profile-fields input:focus-visible,.oa-profile-fields textarea:focus-visible{outline:2px solid #3269a6;outline-offset:1px}
+.oa-profile-fields:disabled{opacity:.65}
+.oa-profile-footer{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:12px}
+.oa-profile-footer>span{flex:1;min-width:0;color:#315b80;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.oa-profile-footer>span.oa-profile-error,.oa-profile-load-error>p{color:#a43939}
+.oa-profile-footer button{appearance:none;flex:none;min-height:36px;padding:7px 18px;border:0;border-radius:8px;background:#2c638e;color:#fff;font-size:13px;font-weight:600;cursor:pointer}
+.oa-profile-footer button:hover{background:#245578}.oa-profile-footer button:disabled{opacity:.65;cursor:wait}
+.oa-profile-load-error>p{margin:0;font-size:13px;line-height:1.6}
+@media(max-width:620px){.oa-profile-fields input,.oa-profile-fields textarea{font-size:16px}}
+.oa-account-login.registration-shell.oa-login-shell{display:block;min-height:0;padding:0;background:transparent}
+.oa-account-login .oa-login-story,.oa-account-login .registration-brand-lockup,.oa-account-login .login-entry-heading,.oa-account-login .oa-intro,.oa-account-login .account-switch-help,.oa-account-login .feishu-qr-help{display:none}
+.oa-account-login.registration-shell.oa-login-shell .registration-card{width:100%;max-width:none;min-width:0;margin:0;padding:0;border:0;border-radius:0;box-shadow:none;background:transparent}
+.oa-account-login .login-entry-panel{margin:0;padding:0;border:0;background:transparent}.oa-account-login.oa-login-shell .feishu-qr-login{padding:0}
+.oa-account-login .login-notice{padding:10px;margin:12px 0;font-size:12px}.oa-account-login .feishu-name-match-candidate{flex-direction:column;align-items:stretch}
+.oa-account-login .feishu-qr-frame{margin:0 auto;flex:none;max-width:100%}.oa-account-login .feishu-qr-login>span{font-size:12px}
+.oa-account-login .github-login{margin-top:10px}.oa-account-login .login-refresh{min-height:40px}
+.oa-login-workspace{min-height:100dvh;background:#f6f8fb;color:#172b3a}
+.oa-login-header{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:66px;padding:10px clamp(16px,4vw,48px);border-bottom:1px solid #e1e8ef;background:#fff}
+.oa-login-header-brand{min-width:0}.oa-login-header-brand strong{display:block;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.oa-login-header-brand>span{display:block;color:#637486;font-size:12px;line-height:1.6;margin-top:2px}
+.oa-login-welcome{max-width:1000px;margin:auto;padding:clamp(50px,10vh,100px) 28px 40px}
+.oa-login-welcome-kicker{color:#406891;font-size:13px;font-weight:600;letter-spacing:.06em}
+.oa-login-welcome h1{margin:18px 0 14px;font-size:clamp(28px,4vw,42px);font-weight:650;line-height:1.4;letter-spacing:-.02em}
+.oa-login-welcome>p{color:#637486;font-size:16px;line-height:1.8;margin:0}
+.oa-login-primary{display:inline-flex;align-items:center;gap:10px;min-height:44px;margin-top:28px;padding:10px 20px;border:0;border-radius:10px;background:#2c638e;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
+.oa-login-overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:48px}
+.oa-login-overview button{text-align:left;min-height:118px;padding:20px;border:1px solid #dfe7ee;border-radius:14px;background:#fff;color:#243b4e;cursor:pointer}
+.oa-login-overview button:hover{border-color:#9eb8ce;background:#fbfdff}.oa-login-overview strong{display:block;font-size:16px;font-weight:600}
+.oa-login-overview span{display:block;font-size:13px;line-height:1.7;color:#637486;margin-top:10px}
+.oa-login-guide{display:inline-flex;align-items:center;gap:7px;color:#406891;font-size:13px;text-decoration:none;margin-top:28px}
+.oa-access-content>.registration-shell{min-height:calc(100dvh - 66px)}
+.oa-app.oa-workspace .main-shell>.oa-model-chat-header{grid-template-columns:0 minmax(0,1fr) auto!important;column-gap:8px}
+.oa-app.oa-workspace .oa-model-chat-header .oa-model-chat-actions{justify-content:flex-end;gap:4px}
+.oa-app.oa-workspace .oa-model-chat-header .oa-model-chat-actions>.oa-account-root{display:block!important}
+.oa-app.oa-workspace .topbar-actions>.oa-account-root{display:block!important}
+html[data-oa-large-text="true"]{font-size:18px}
+html[data-oa-large-text="true"] .oa-app .main-shell :is(p,li,textarea,input,.message-content,.oa-rich-answer){font-size:17px!important;line-height:1.8}
+html[data-oa-compact="true"] .oa-app :is(.stats-grid,.people-grid,.project-grid){gap:10px}
+html[data-oa-compact="true"] .oa-app :is(.stat-card,.person-card,.project-card){padding:14px}
+html[data-oa-compact="true"] .oa-app .requests-table :is(td,th){padding-top:8px;padding-bottom:8px}
+html[data-oa-reduce-motion="true"] :is(.oa-app,.oa-account-popover,.oa-login-workspace),html[data-oa-reduce-motion="true"] :is(.oa-app,.oa-account-popover,.oa-login-workspace) *{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+@media(max-width:620px){.oa-login-header{padding:10px 12px;min-height:60px;gap:6px}.oa-login-header-brand strong{font-size:14px}.oa-login-header-brand>span{font-size:10px}.oa-login-welcome{padding:48px 20px 30px}.oa-login-overview{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:32px}.oa-login-overview button{min-height:100px;padding:16px}.oa-account-trigger{gap:5px;padding:4px 6px}.oa-account-name{max-width:70px;font-size:13px}.oa-account-avatar{width:26px;height:26px;font-size:12px}.oa-account-panel{padding:12px}.oa-app.oa-workspace .oa-model-chat-header .oa-model-chat-title{font-size:14px;text-align:left}.oa-app.oa-workspace .oa-model-chat-header .oa-model-chat-actions{gap:0}}
+@media(max-width:360px){.oa-login-header-brand>span{display:none}.oa-account-name{max-width:56px}.oa-account-trigger{gap:4px}.oa-login-header-brand strong{font-size:13px}}

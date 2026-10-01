@@ -1,4 +1,5 @@
 "use client";
+import { OaAccountMenu, OaLoginWorkspace } from "@/components/oa-account-menu";
 import { OaResearchTools } from "@/components/oa-research-tools";
 
 /* This screen intentionally synchronizes remote OA state into local form/UI state. */
@@ -1701,7 +1702,7 @@ async function provisionCurrentFeishuMember(confirmation?: "none-of-these-accoun
   return nextSession;
 }
 
-function RegistrationGate({ initialUser, initialStatus, chatgptLoginEnabled = true, githubLoginEnabled = false, feishuLoginEnabled = false, onRegistered }: { initialUser?: SessionInfo["user"]; initialStatus?: SessionInfo["status"]; chatgptLoginEnabled?: boolean; githubLoginEnabled?: boolean; feishuLoginEnabled?: boolean; onRegistered: (session: SessionInfo) => void }) {
+function RegistrationGate({ initialUser, initialStatus, chatgptLoginEnabled = true, githubLoginEnabled = false, feishuLoginEnabled = false, compact = false, onRegistered }: { compact?: boolean; initialUser?: SessionInfo["user"]; initialStatus?: SessionInfo["status"]; chatgptLoginEnabled?: boolean; githubLoginEnabled?: boolean; feishuLoginEnabled?: boolean; onRegistered: (session: SessionInfo) => void }) {
   const [refreshing, setRefreshing] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
   const [bindingCandidates, setBindingCandidates] = useState<FeishuBindingCandidate[]>([]);
@@ -1800,7 +1801,7 @@ function RegistrationGate({ initialUser, initialStatus, chatgptLoginEnabled = tr
     }
   };
   return (
-    <div className="registration-shell oa-login-shell">
+    <div className={`registration-shell oa-login-shell ${compact ? "oa-account-login" : ""}`}>
       <section className="oa-login-story" aria-labelledby="oa-login-story-title">
         <div className="oa-login-wordmark"><span className="oa-brand-symbol" aria-hidden="true"><Building2 className="size-5" /></span><span>{officialBrand}</span></div>
         <div className="oa-login-story-copy"><span className="oa-login-kicker">联合研发工作空间</span><h2 id="oa-login-story-title">让每一步研发，<br />都有清晰的进展。</h2><p>把项目协作、审批办理与知识积累，汇集到同一个工作空间。</p></div>
@@ -2634,11 +2635,11 @@ export default function Home() {
   const openMetricApproval = (id: string) => { setMetricPanel(null); openApproval(id); };
   const isModelHeader = activeView === "chat" || (activeView === "knowledge" && knowledgeTab === "ask");
   const secondaryTitle = activeView === "library" ? "资料库" : activeView === "home" ? "入组导览" : activeView === "chat" ? "消息" : activeView === "mail" ? "邮箱" : activeView === "dashboard" ? "审批工作台" : activeView === "todos" ? "统一待办" : activeView === "project" ? "工作台" : activeView === "requests" ? showMineOnly ? "待我审批" : "全部申请" : activeView === "people" ? "通讯录" : activeView === "knowledge" ? knowledgeTab === "ask" ? "AI 助手" : knowledgeTab === "submit" ? "上传资料" : knowledgeTab === "mine" ? "我的资料" : knowledgeTab === "review" ? "资料审核" : "知识资料管理" : activeView === "members" ? "成员审核" : activeView === "oem" ? "官网 OEM 申请" : activeView === "notifications" ? "飞书提醒" : activeView === "profile" ? "我的" : "流程与规则";
-  if (!session) return <div className="registration-shell"><div className="registration-card"><div className="registration-brand-lockup"><strong>{officialBrand}</strong><span>联合研发 OA</span></div><a className="oa-gate-guide-link" href="/guide"><BookOpen className="size-4" />项目章程与使用指南</a><h1>请登录账号</h1><p className="registration-intro">正在加载安全登录方式，请稍候。完成登录与 OA 准入后，实验室 AI 将自动显示。</p></div></div>;
-  if (!session.registered && (session.accountBindingRequired || session.accountBindingConflict || session.platformIdentityMissing || session.externalIdentityLinkRequired || session.githubIdentityLinkRequired || session.feishuIdentityLinkRequired)) return <><Toaster position="top-right" /><IdentityAccessGate session={session} onRefresh={refreshSession} /></>;
-  if (session.status === "pending") return <><Toaster position="top-right" /><PendingGate session={session} onRefresh={refreshSession} /></>;
-  if (!session.registered) return <><Toaster position="top-right" /><RegistrationGate initialUser={session.user} initialStatus={session.status} chatgptLoginEnabled={session.chatgptLoginEnabled} githubLoginEnabled={session.githubLoginEnabled} feishuLoginEnabled={session.feishuLoginEnabled} onRegistered={setSession} /></>;
-  if (needsNda) return <><Toaster position="top-right" /><NdaAdmissionGate key={ndaAdmissionIdentityKey(session.user?.email)} session={session} onRefresh={refreshSession} /></>;
+  if (!session) return <OaLoginWorkspace loading />;
+  if (!session.registered && (session.accountBindingRequired || session.accountBindingConflict || session.platformIdentityMissing || session.externalIdentityLinkRequired || session.githubIdentityLinkRequired || session.feishuIdentityLinkRequired)) return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user}><IdentityAccessGate session={session} onRefresh={refreshSession} /></OaLoginWorkspace></>;
+  if (session.status === "pending") return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user}><PendingGate session={session} onRefresh={refreshSession} /></OaLoginWorkspace></>;
+  if (!session.registered) return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user} loginContent={<RegistrationGate compact initialUser={session.user} initialStatus={session.status} chatgptLoginEnabled={session.chatgptLoginEnabled} githubLoginEnabled={session.githubLoginEnabled} feishuLoginEnabled={session.feishuLoginEnabled} onRegistered={setSession} />} /></>;
+  if (needsNda) return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user}><NdaAdmissionGate key={ndaAdmissionIdentityKey(session.user?.email)} session={session} onRefresh={refreshSession} /></OaLoginWorkspace></>;
   return (
     <OaConversationProvider key={session.user?.email || "oa-member"} currentUser={session.user || undefined} visible={(activeView === "knowledge" && knowledgeTab === "ask") || (mobileDirect && activeView === "chat")} onOpenChat={() => { setKnowledgeTab("ask"); navigate(mobileDirect ? "chat" : "knowledge"); }}>
     <OaAiMemberProvider onTeamChat={() => navigate("chat")}>
@@ -2655,6 +2656,7 @@ export default function Home() {
           <button ref={mobileMenuButtonRef} className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="打开导航" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation"><Menu className="size-5" /></button>
           {isModelHeader ? <div className="oa-model-chat-title">机器人自主移动与操作实验室</div> : <OaConversationTitle><div className="oa-topbar-secondary-title"><span className="oa-lab-title">机器人自主移动与操作实验室</span><strong>{secondaryTitle}</strong></div></OaConversationTitle>}
           <div className={isModelHeader ? "oa-model-chat-actions" : "topbar-actions"}>{isModelHeader && <OaNewChatButton />}
+            <OaAccountMenu user={session.user} avatarDataUrl={myAvatarDataUrl} roleLabel={sessionRoleLabel(session.role, Boolean(session.isAdmin))} onIdentityChanged={(fullName, avatarDataUrl) => { setMyAvatarDataUrl(avatarDataUrl); setSession((current) => current?.user && current.user.email === session.user?.email ? { ...current, user: { ...current.user, displayName: fullName } } : current); }} />
 
 
           </div>
