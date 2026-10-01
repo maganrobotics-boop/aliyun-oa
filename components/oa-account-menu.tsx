@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, BookOpen, ChevronDown, HelpCircle, LogOut, Settings2, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { OaAccountProfile } from "./oa-account-profile";
 import "./oa-account-menu.css";
 
 export type OaAccountUser = { email: string; displayName: string; authProvider?: string };
@@ -20,10 +21,10 @@ function applyPreferences(value: Preferences) {
 }
 type AccountProps = {
   user?: OaAccountUser | null; avatarDataUrl?: string; roleLabel?: string;
-  onProfile?: () => void; loginContent?: ReactNode; loading?: boolean;
+  onIdentityChanged?: (fullName: string, avatarDataUrl: string) => void; loginContent?: ReactNode; loading?: boolean;
   defaultOpen?: boolean; openRequest?: number;
 };
-export function OaAccountMenu({ user, avatarDataUrl = "", roleLabel = "", onProfile, loginContent, loading = false, defaultOpen = false, openRequest = 0 }: AccountProps) {
+export function OaAccountMenu({ user, avatarDataUrl = "", roleLabel = "", onIdentityChanged, loginContent, loading = false, defaultOpen = false, openRequest = 0 }: AccountProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [panel, setPanel] = useState(loginContent ? "login" : "menu");
   const [preferences, setPreferences] = useState<Preferences>(defaults);
@@ -58,9 +59,7 @@ export function OaAccountMenu({ user, avatarDataUrl = "", roleLabel = "", onProf
     } catch { setNotice("当前浏览器无法保存设置，请检查存储权限。"); }
   };
   const changePanel = (next: string) => { setPanel(next); setNotice(""); };
-  const openProfile = () => {
-    if (onProfile) { setOpen(false); onProfile(); } else changePanel("profile");
-  };
+  const openProfile = () => changePanel("profile");
   const logout = async () => {
     if (loggingOut) return;
     setLoggingOut(true); setNotice("");
@@ -85,7 +84,7 @@ export function OaAccountMenu({ user, avatarDataUrl = "", roleLabel = "", onProf
           <span className="oa-account-name">{loading ? "加载中" : name}</span><ChevronDown size={13} aria-hidden="true" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" side="bottom" sideOffset={8} collisionPadding={12} className={"oa-account-popover " + (panel === "menu" ? "oa-account-menu" : "oa-account-panel")} aria-label={title}>
+      <PopoverContent align="end" side="bottom" sideOffset={8} collisionPadding={12} className={"oa-account-popover " + (panel === "menu" ? "oa-account-menu" : "oa-account-panel") + (panel === "profile" ? " oa-account-profile-panel" : "")} aria-label={title}>
         {panel === "menu" ? <>
           <div className="oa-account-identity"><span className="oa-account-avatar" aria-hidden="true">{avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : [...name][0]}</span><div><strong>{name}</strong><small>{roleLabel || "OA 成员"}</small></div></div>
           <div className="oa-account-actions">{items.map(({ label, icon: Icon, action }) => <button key={label} type="button" onClick={action}><Icon size={19} aria-hidden="true" />{label}</button>)}</div>
@@ -95,12 +94,12 @@ export function OaAccountMenu({ user, avatarDataUrl = "", roleLabel = "", onProf
           <div className="oa-account-panel-heading">{user && !loginContent && <button type="button" onClick={() => changePanel("menu")} aria-label="返回个人菜单"><ArrowLeft size={18} /></button>}<h2>{title}</h2><button type="button" onClick={() => setOpen(false)} aria-label="关闭账户面板"><X size={19} /></button></div>
           <div className="oa-account-panel-body">
             {panel === "login" ? loginContent : panel === "personalization" ? <>
-              <p className="oa-account-muted">按你的习惯调整 OA，设置会保存在当前浏览器。</p>
+              <p className="oa-account-muted">仅保存在当前浏览器。</p>
               {([{ key: "largeText", label: "放大字体", detail: "让正文、输入框和资料更容易阅读" }, { key: "compact", label: "紧凑布局", detail: "减少工作台卡片和列表的间距" }, { key: "reduceMotion", label: "减少动画", detail: "减少弹层和界面的动态效果" }] as const).map(({ key, label, detail }) => <label className="oa-preference-row" key={key}><span><strong>{label}</strong><small>{detail}</small></span><input type="checkbox" checked={preferences[key]} onChange={(event) => updatePreference({ ...preferences, [key]: event.target.checked })} /></label>)}
               <button type="button" className="oa-account-secondary" onClick={() => updatePreference({ ...defaults })}>恢复默认</button>
-            </> : panel === "help" ? <><p className="oa-account-muted">从工作台跟进任务，在审批中办理申请，在资料库查阅与提交资料。</p><a className="oa-account-link" href="/guide"><BookOpen size={18} />项目章程与使用指南</a></> : <>
+            </> : panel === "help" ? <><p className="oa-account-muted">从工作台跟进任务，在审批中办理申请，在资料库查阅与提交资料。</p><a className="oa-account-link" href="/guide"><BookOpen size={18} />项目章程与使用指南</a></> : panel === "profile" && user && onIdentityChanged ? <OaAccountProfile key={user.email} user={user} onIdentityChanged={onIdentityChanged} /> : <>
               <dl className="oa-account-details"><div><dt>姓名</dt><dd>{name}</dd></div><div><dt>登录方式</dt><dd>{user?.authProvider === "feishu" ? "飞书" : user?.authProvider === "github" ? "GitHub" : user?.authProvider === "chatgpt" ? "ChatGPT" : "OA 账号"}</dd></div>{roleLabel && <div><dt>身份</dt><dd>{roleLabel}</dd></div>}</dl>
-              {onProfile ? <button type="button" className="oa-account-secondary" onClick={openProfile}>编辑个人资料与账户设置</button> : <p className="oa-account-muted">完成当前页面的准入步骤后，可编辑个人资料。</p>}
+              {onIdentityChanged ? <button type="button" className="oa-account-secondary" onClick={openProfile}>编辑资料</button> : <p className="oa-account-muted">完成准入后可编辑。</p>}
               {panel === "settings" && <button type="button" className="oa-account-logout" disabled={loggingOut} onClick={() => void logout()}><LogOut size={18} />{loggingOut ? "正在退出…" : "退出登录"}</button>}
             </>}
           </div>

@@ -2656,7 +2656,7 @@ export default function Home() {
           <button ref={mobileMenuButtonRef} className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="打开导航" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation"><Menu className="size-5" /></button>
           {isModelHeader ? <div className="oa-model-chat-title">机器人自主移动与操作实验室</div> : <OaConversationTitle><div className="oa-topbar-secondary-title"><span className="oa-lab-title">机器人自主移动与操作实验室</span><strong>{secondaryTitle}</strong></div></OaConversationTitle>}
           <div className={isModelHeader ? "oa-model-chat-actions" : "topbar-actions"}>{isModelHeader && <OaNewChatButton />}
-            <OaAccountMenu user={session.user} avatarDataUrl={myAvatarDataUrl} roleLabel={sessionRoleLabel(session.role, Boolean(session.isAdmin))} onProfile={() => navigate("profile")} />
+            <OaAccountMenu user={session.user} avatarDataUrl={myAvatarDataUrl} roleLabel={sessionRoleLabel(session.role, Boolean(session.isAdmin))} onIdentityChanged={(fullName, avatarDataUrl) => { setMyAvatarDataUrl(avatarDataUrl); setSession((current) => current?.user && current.user.email === session.user?.email ? { ...current, user: { ...current.user, displayName: fullName } } : current); }} />
 
 
           </div>
