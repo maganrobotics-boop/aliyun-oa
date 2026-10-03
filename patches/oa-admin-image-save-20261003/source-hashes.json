@@ -1,0 +1,33 @@
+{
+  "productionBase": "/opt/omindos-deploy/releases/oa-pdf-layout-20261003-1006",
+  "files": {
+    "lib/knowledge-store.ts": {
+      "beforeSha256": "3dd9adc5640c98578533c722419c3ccb54964a8c9c76eb3cea4a6a47f6acb144",
+      "afterSha256": "2807b689759cfe6befd79101acef7053169df9cff8144697d426df4e6785af4e"
+    },
+    "lib/knowledge-assets.ts": {
+      "beforeSha256": "8e947371e90c4e9987c6a4c937463c7f906362bb0b2c9dadabd21d293ef37ec7",
+      "afterSha256": "daa7588e44d891d248c9f2f5d85b59a9d130cf221fb20d377d437e3b709a67d0"
+    },
+    "aliyun/fs-r2.ts": {
+      "beforeSha256": "c88efa9a8edc45c769b4c240c49b23e1b10fb3ec7942ef5cb9a861aeca78ec0e",
+      "afterSha256": "2d053b228b7d6cfc080d11e34889252bb6d830b115ec81d17b51919cc67a6553"
+    },
+    "aliyun/oss-r2.ts": {
+      "beforeSha256": "50c8cb3dfa2e4638e667482fefba3344b968d67486238f4ebf2b0cd95bb710b9",
+      "afterSha256": "f7f1343c4a5b439fb5c8abd393dedddce1ec9539f21cc0fc761ef21666b28cca"
+    },
+    "tests/knowledge-store.test.mjs": {
+      "beforeSha256": "2588256f6f8c38ca8e668977d229e702071cf30326cb7edf3a6f7e22cd10e9e5",
+      "afterSha256": "716cbf7c37d6b608c4de21cad95e99537b40a75bdae47f212e9ee59a5ec419c0"
+    },
+    "tests/knowledge-admin-edit-images.test.mjs": {
+      "beforeSha256": null,
+      "afterSha256": "595d227e93107af66fa549966c856cb194ae1ec0692512d11784b8591afa5f23"
+    },
+    "tests/fixtures/aliyun-knowledge-image-staging.sql": {
+      "beforeSha256": null,
+      "afterSha256": "5077f432b94bd2def5ad7a2dad67b23088907cfd5ec411c4270506fb550b00cf"
+    }
+  }
+}
