@@ -1,0 +1,203 @@
+{
+  "readOnly": true,
+  "source": "codex/oa-source-integration-20261007",
+  "scope": "Only manifest paths; not full production equivalence.",
+  "overlays": [
+    {
+      "overlay": "image",
+      "baseline": "/opt/omindos-deploy/releases/oa-pdf-layout-20261003-1006",
+      "status": "blocked",
+      "files": [
+        {
+          "path": "lib/knowledge-store.ts",
+          "before": "3dd9adc5640c98578533c722419c3ccb54964a8c9c76eb3cea4a6a47f6acb144",
+          "after": "2807b689759cfe6befd79101acef7053169df9cff8144697d426df4e6785af4e",
+          "actual": "f7f7147bffd3ffa3ede91530197cb08214f999b02dffacdaf398251966ad24a7",
+          "state": "mismatch"
+        },
+        {
+          "path": "lib/knowledge-assets.ts",
+          "before": "8e947371e90c4e9987c6a4c937463c7f906362bb0b2c9dadabd21d293ef37ec7",
+          "after": "daa7588e44d891d248c9f2f5d85b59a9d130cf221fb20d377d437e3b709a67d0",
+          "actual": "4266472e883e1aa003deb023ea60b15e6cc6a298ab239e4f905cae8d2fb0762d",
+          "state": "mismatch"
+        },
+        {
+          "path": "aliyun/fs-r2.ts",
+          "before": "c88efa9a8edc45c769b4c240c49b23e1b10fb3ec7942ef5cb9a861aeca78ec0e",
+          "after": "2d053b228b7d6cfc080d11e34889252bb6d830b115ec81d17b51919cc67a6553",
+          "actual": "c88efa9a8edc45c769b4c240c49b23e1b10fb3ec7942ef5cb9a861aeca78ec0e",
+          "state": "before"
+        },
+        {
+          "path": "aliyun/oss-r2.ts",
+          "before": "50c8cb3dfa2e4638e667482fefba3344b968d67486238f4ebf2b0cd95bb710b9",
+          "after": "f7f1343c4a5b439fb5c8abd393dedddce1ec9539f21cc0fc761ef21666b28cca",
+          "actual": "50c8cb3dfa2e4638e667482fefba3344b968d67486238f4ebf2b0cd95bb710b9",
+          "state": "before"
+        },
+        {
+          "path": "tests/knowledge-store.test.mjs",
+          "before": "2588256f6f8c38ca8e668977d229e702071cf30326cb7edf3a6f7e22cd10e9e5",
+          "after": "716cbf7c37d6b608c4de21cad95e99537b40a75bdae47f212e9ee59a5ec419c0",
+          "actual": "b3592d10399af05e06464384a98c8a02daa506c4c19e771ac8dad55bec946736",
+          "state": "mismatch"
+        },
+        {
+          "path": "tests/knowledge-admin-edit-images.test.mjs",
+          "before": null,
+          "after": "595d227e93107af66fa549966c856cb194ae1ec0692512d11784b8591afa5f23",
+          "actual": null,
+          "state": "before"
+        },
+        {
+          "path": "tests/fixtures/aliyun-knowledge-image-staging.sql",
+          "before": null,
+          "after": "5077f432b94bd2def5ad7a2dad67b23088907cfd5ec411c4270506fb550b00cf",
+          "actual": null,
+          "state": "before"
+        }
+      ]
+    },
+    {
+      "overlay": "pwa",
+      "baseline": "oa-pwa-20261006",
+      "status": "blocked",
+      "files": [
+        {
+          "path": "app/layout.tsx",
+          "before": "12f8f489148fa8e0de955dc96ec17ef62e6c62c6ce19323eff7ceb0f21a0e512",
+          "after": "3855b9918eb93494ead142fc17ea5075e82a8b4b6308b255146be7aee2764769",
+          "actual": "dff4063517094f4475ee1fd8ebf5820d8446e4cbd8a292f6361e073b70b272af",
+          "state": "mismatch"
+        },
+        {
+          "path": "components/oa-pwa.tsx",
+          "before": "419c33f02f9624d21234ef41264c9a3c715883d678016ab4de54eaa9ad4096d4",
+          "after": "ac3efe895da21cb418562191b983ca11414e68690bd7e55c953f30bbe4eeeed0",
+          "actual": null,
+          "state": "missing"
+        },
+        {
+          "path": "next.config.ts",
+          "before": "2c65565d6066a6f89f51a02faf3d8e9e7c69d1b9388f51b1e9142418714ac1a8",
+          "after": "dca0e5f5294edba9a90d8f8365219f7f3131d97a859f7baa709920afa628057c",
+          "actual": "2c65565d6066a6f89f51a02faf3d8e9e7c69d1b9388f51b1e9142418714ac1a8",
+          "state": "before"
+        },
+        {
+          "path": "public/manifest.webmanifest",
+          "before": "ea2e3ce0e50736ea2601713c999901de16b13e8b94bdce5dfd7d97a261dc7cc4",
+          "after": "cf4062487891a9d42541edc18efe7d53c18a2f5acad9a8fb20b3e5239c24dabd",
+          "actual": null,
+          "state": "missing"
+        },
+        {
+          "path": "public/oa-sw.js",
+          "before": "cb7b3d8069ede286f79dae9e67d81f75f887a0a6f40692635858d2827dfa4173",
+          "after": "8477b46e49d7618dbe1d9a445e5913d7694b3a9054db9a5c61365ce00451328d",
+          "actual": null,
+          "state": "missing"
+        },
+        {
+          "path": "public/pwa/icon-192-v2.png",
+          "before": null,
+          "after": "c5345665cf2b243f9d411c7a07cf5fce68f8d48e4ea75ac9112cc7c6105416ff",
+          "actual": null,
+          "state": "before"
+        },
+        {
+          "path": "public/pwa/icon-512-v2.png",
+          "before": null,
+          "after": "0394a161ae9b73281963f71667cac993d649e19c15eca42b43d3d06956ba420e",
+          "actual": null,
+          "state": "before"
+        },
+        {
+          "path": "public/pwa/icon-maskable-512-v2.png",
+          "before": null,
+          "after": "4b6ff15f0eadf39327c142156d8e60c3d27dedb0e76356eff11c6b45ade456d7",
+          "actual": null,
+          "state": "before"
+        },
+        {
+          "path": "public/pwa/apple-touch-icon-180-v2.png",
+          "before": null,
+          "after": "3ababe6a56085f61deae93ee06500f7891966b07b9ab96f3f323b365d1c69134",
+          "actual": null,
+          "state": "before"
+        },
+        {
+          "path": "tests/pwa-safe.test.mjs",
+          "before": null,
+          "after": "af75b28b1f09212cac01deaaa2feb80b69c528dbe1f89ee7bdbaa9d6e4201453",
+          "actual": null,
+          "state": "before"
+        }
+      ]
+    },
+    {
+      "overlay": "pending",
+      "baseline": "oa-people-20261007-v6",
+      "status": "blocked",
+      "files": [
+        {
+          "path": "app/page.tsx",
+          "before": "7e9e912cb22c2c9b1bd1e2fdebee108e6824845e0c288636df9ea7f900dbc03d",
+          "after": "f25a73c1c21cf4546eb0228577851f92584de45421c88f10c8ab3ce33bffc33e",
+          "actual": "4db847941b1f67275fac4fc1392e011f66a19d52bfc309d71a3e7dfdb58490c9",
+          "state": "mismatch"
+        },
+        {
+          "path": "app/people-workbench/page.tsx",
+          "before": "43fb062c3f4ce849cca0c42d6d2dd93d7cda636191ffd17403b845e511a53852",
+          "after": "d9383a22bff01deec281a8f018340d7507432d2472cbf20ad8fe4cd9b12447c2",
+          "actual": null,
+          "state": "missing"
+        },
+        {
+          "path": "components/oa-eight-entry-navigation.tsx",
+          "before": "4686b2b5ff312d595b50daa0d29a1273667c4d40f235e0984b6e49566fc42db0",
+          "after": "11bc8d78694f8658af7ea0dc9f12abac922663d57f0cf68f15f8e1071aaad5bb",
+          "actual": "bf66d4eb2fd67b98a7eaeaacc7a0bf6f670e1182b7c970af0953fc991e4472c4",
+          "state": "mismatch"
+        },
+        {
+          "path": "components/oa-pending-entry.css",
+          "before": null,
+          "after": "fa42533e1105fca8b6f513e4e85d40eea8bd7c496e9a875e233d53f4b6c3b793",
+          "actual": null,
+          "state": "before"
+        },
+        {
+          "path": "components/project-workspace.tsx",
+          "before": "d9024430fee1c78a6f83416d48dbe19474326d35ecf61dea61c0ec8bc723651b",
+          "after": "e84e6af6c1f2acd3a0bb47b5682f98ed3baacaca90f91fcd1ce5c420003d1e7f",
+          "actual": "c07a58a91091ca74d7910f20b302e37542edd9e3b87b5daccea7c19fc3b24643",
+          "state": "mismatch"
+        },
+        {
+          "path": "lib/my-pending-items.ts",
+          "before": null,
+          "after": "da1b3750e0d487f18cf2cb7cb45f20e0dbbfefcb2f25bffe5086435142ee271d",
+          "actual": null,
+          "state": "before"
+        },
+        {
+          "path": "tests/fixtures/people-workbench-browser.tsx",
+          "before": "70841452c21903d50389f6a8c7642ec6b27ba586669ad363c821824b07a78f6b",
+          "after": "d057cf5f227f85af792094bd58be8426a08c9ea34e5828a976a4e7ac17b9b6fc",
+          "actual": null,
+          "state": "missing"
+        },
+        {
+          "path": "tests/my-pending-items.test.mjs",
+          "before": null,
+          "after": "7dc4250d24b67e097b22ae978f020e34c91afca64b5760643f2a6fe238f1698d",
+          "actual": null,
+          "state": "before"
+        }
+      ]
+    }
+  ]
+}
