@@ -1,0 +1,18 @@
+name: Check Aliyun release permissions
+on:
+  pull_request:
+    paths:
+      - 'deploy/aliyun/**'
+      - 'tests/aliyun-release-preflight.test.py'
+      - '.github/workflows/check-aliyun-release-preflight.yml'
+permissions:
+  contents: read
+jobs:
+  permission-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: bash -n deploy/aliyun/deploy.sh deploy/aliyun/deploy-from-github.sh deploy/aliyun/preflight-release.sh
+      - name: Real service identity permissions on synthetic temporary releases
+        run: sudo env PATH=/usr/sbin:/usr/bin:/sbin:/bin python3 tests/aliyun-release-preflight.test.py
