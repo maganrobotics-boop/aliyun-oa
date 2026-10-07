@@ -6,6 +6,12 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+      # Release tooling is installed separately; a tooling-only merge must not
+      # replace newer production application code with the repository snapshot.
+      - 'deploy/aliyun/**'
+      - 'tests/aliyun-release-preflight.test.py'
+      - '.github/workflows/check-aliyun-release-preflight.yml'
+      - '.github/workflows/deploy-aliyun.yml'
 concurrency:
   group: deploy-oa-production
   cancel-in-progress: false
