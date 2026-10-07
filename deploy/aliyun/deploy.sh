@@ -8,7 +8,7 @@ if [[ "${EUID}" -ne 0 || ! -f "${archive}" || ! "${domain}" =~ ^[a-z0-9.-]+$ || 
   exit 64
 fi
 
-for command in node npm nginx systemctl tar runuser curl openssl; do
+for command in node npm nginx systemctl tar runuser curl openssl python3; do
   command -v "${command}" >/dev/null || { echo "Missing required command: ${command}" >&2; exit 69; }
 done
 node -e "const [major,minor]=process.versions.node.split('.').map(Number); if (major<22 || (major===22 && minor<13)) process.exit(1)" \
@@ -65,6 +65,12 @@ install -d -m 0750 -o originmind-oa -g originmind-oa "${standalone}/.next"
 cp -a "${release_dir}/.next/static" "${standalone}/.next/static"
 rm -rf -- "${standalone}/.next/cache"
 ln -s "${cache_root}" "${standalone}/.next/cache"
+
+# Validate final packaged paths as the unit's intended identity before changing
+# configuration, the current pointer, or any running service. Never repair here.
+# On first install the unit is not registered yet; use the shipped User/Group.
+runuser -u originmind-oa -g originmind-oa -- python3 - "${release_dir}" --layout standalone \
+  < "$(dirname "${BASH_SOURCE[0]}")/preflight-release.py"
 
 install -m 0644 "${release_dir}/deploy/aliyun/originmind-oa.service" /etc/systemd/system/originmind-oa.service
 sed "s/__DOMAIN__/${domain}/g" "${release_dir}/deploy/aliyun/nginx.conf.template" > /etc/nginx/conf.d/originmind-oa.conf
