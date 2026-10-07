@@ -22,7 +22,7 @@ const vite = await createServer({
       return null;
     },
     load(id) {
-      if (id === "\0labor-test-db") return `export async function getDb() { return globalThis.${stateKey}.db; }`;
+      if (id === "\0labor-test-db") return `export async function getDb() { return globalThis.${stateKey}.db; } export async function getD1Database() { return globalThis.${stateKey}.db.$client; }`;
       if (id === "\0labor-test-auth") return `
         import { sql } from "drizzle-orm";
         const state = () => globalThis.${stateKey};
@@ -43,6 +43,9 @@ const vite = await createServer({
   }],
 });
 const route = await vite.ssrLoadModule("/app/api/approvals/[id]/route.ts");
+const policy = await vite.ssrLoadModule("/lib/approval-policy.ts");
+const adminPolicy = await vite.ssrLoadModule("/lib/administrator-approval.ts");
+const ndaAgreement = await vite.ssrLoadModule("/lib/nda-agreement.ts");
 const pdf = await vite.ssrLoadModule("/lib/approval-pdf.ts");
 let sqlite;
 after(async () => { sqlite?.close(); delete globalThis[stateKey]; await vite.close(); });
@@ -58,6 +61,7 @@ function d1Adapter(database) {
     };
     return {
       bind(...values) { return prepare(query, values); },
+      async first() { return database.prepare(query).get(...params) ?? null; },
       async all() { return execute(); },
       async run() { return execute(); },
       async raw() {
@@ -86,7 +90,7 @@ function actor(identity = owner) {
   return {
     user: { email: identity.email, displayName: identity.displayName },
     accountUserId: identity.accountUserId, memberId: identity.email,
-    role: "project_owner", isAdmin: true, isFinanceOwner: true, ndaCompleted: true,
+    role: "project_owner", isAdmin: false, isFinanceOwner: true, ndaCompleted: true,
   };
 }
 function insertApproval({ id = "labor-test", type = "劳务报酬", step = "项目负责人", requester = "applicant@example.com", payload }) {
@@ -209,4 +213,109 @@ test("technical and purchase reviews retain their distinct-reviewer requirement"
     assert.equal((await patch({ nextReviewerEmail: owner.email })).status, 409);
     assert.equal(ledger().length, 0);
   }
+});
+
+test("administrator can review an unassigned technical approval, including their own application", async () => {
+  globalThis[stateKey].actor.isAdmin = true;
+  sqlite.prepare("UPDATE approvals SET type='技术审核',requester_email=?,current_reviewer_email='other@example.com' WHERE id='labor-test'").run(owner.email);
+  const result = await patch({ note: "管理员本人审批" });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.approval.status, "已归档");
+  assert.equal(result.body.approval.payload.administratorReviews[0].accountUserId, owner.accountUserId);
+  assert.equal(result.body.approval.payload.administratorReviews[0].assignedReviewerEmail, "other@example.com");
+  assert.equal(ledger()[0].actor_email, owner.email);
+  assert.match(ledger()[0].note, /系统管理员审批/);
+});
+
+test("administrator can handle both labor review nodes without being the assigned reviewer", async () => {
+  globalThis[stateKey].actor.isAdmin = true;
+  globalThis[stateKey].projects = [];
+  sqlite.prepare("UPDATE approvals SET current_reviewer_email='other@example.com' WHERE id='labor-test'").run();
+  const first = await patch(recommendation);
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal(first.body.approval.step, "经费负责人");
+  const final = await patch({ finalAmount: 100 });
+  assert.equal(final.status, 200, JSON.stringify(final.body));
+  assert.equal(final.body.approval.status, "已归档");
+  assert.equal(final.body.approval.payload.administratorReviews.length, 2);
+  assert.equal(ledger().length, 2);
+});
+
+test("administrator purchase review preserves actual purchaser identity and completion", async () => {
+  globalThis[stateKey].actor.isAdmin = true;
+  sqlite.prepare("UPDATE approvals SET type='采购审核',requester_email=?,current_reviewer_email='other@example.com',payload_json=? WHERE id='labor-test'")
+    .run(owner.email, JSON.stringify({ amount: 100, initialReviewerEmail: owner.email }));
+  const review = await patch({ purchaserEmail: otherFinance.email });
+  assert.equal(review.status, 200, JSON.stringify(review.body));
+  assert.equal(review.body.approval.step, "统一采购");
+  assert.equal(review.body.approval.payload.purchaseCompletion, undefined);
+  assert.equal((await patch({ action: "confirm_purchase", actualAmount: 80, purchaseNote: "实际采购测试说明" })).status, 404);
+  globalThis[stateKey].actor = actor(otherFinance);
+  const completion = await patch({ action: "confirm_purchase", actualAmount: 80, purchaseNote: "实际采购测试说明" });
+  assert.equal(completion.status, 200, JSON.stringify(completion.body));
+  assert.equal(completion.body.approval.status, "已归档");
+  assert.equal(completion.body.approval.payload.purchaseCompletion.purchaserEmail, otherFinance.email);
+});
+
+test("administrator can review the technical advisor node and select another administrator", async () => {
+  globalThis[stateKey].actor.isAdmin = true;
+  globalThis[stateKey].reviewers[0].isAdmin = true;
+  sqlite.prepare("UPDATE approvals SET type='技术审核',current_step='技术顾问',current_reviewer_email='other@example.com' WHERE id='labor-test'").run();
+  const result = await patch({ nextReviewerEmail: owner.email });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.approval.step, "项目负责人");
+  assert.equal((await patch({})).status, 200);
+});
+
+test("client-supplied administrator flags do not confer approval rights", async () => {
+  sqlite.prepare("UPDATE approvals SET type='技术审核',current_reviewer_email='other@example.com' WHERE id='labor-test'").run();
+  const result = await patch({ isAdmin: true, administratorReviews: [{ email: owner.email }] });
+  assert.equal(result.status, 404);
+  assert.equal(ledger().length, 0);
+});
+
+test("administrator review does not replace developer confirmations or purchase completion", async () => {
+  for (const [type, steps] of [["技术审核", ["技术顾问", "项目负责人"]], ["采购审核", ["技术顾问", "项目负责人"]], ["保密协议", ["项目负责人", "OA管理员"]], ["劳务报酬", ["项目负责人", "经费负责人"]], ["流转审批", ["指定审批"]]]) {
+    for (const step of steps) assert.equal(adminPolicy.administratorReviewAllowed(type, step, "待审核", true), true);
+    for (const status of ["草稿", "已退回", "已撤回", "已作废", "已归档"]) assert.equal(adminPolicy.administratorReviewAllowed(type, steps[0], status, true), false);
+    assert.equal(adminPolicy.administratorReviewAllowed(type, steps[0], "待审核", false), false);
+  }
+  for (const [type, step] of [["技术审核", "开发人确认"], ["采购审核", "统一采购"], ["流转审批", "流转确认"]]) {
+    assert.equal(adminPolicy.administratorReviewAllowed(type, step, "审批中", true), false);
+  }
+});
+
+test("administrator still needs a valid personally signed confidentiality agreement", async () => {
+  globalThis[stateKey].actor.isAdmin = true;
+  sqlite.prepare("UPDATE approvals SET type='保密协议',current_step='OA管理员',current_reviewer_email='other@example.com',payload_json=? WHERE id='labor-test'")
+    .run(JSON.stringify({ agreementKind: "project_owner", agreementVersion: "OWNER-2026-09-R1" }));
+  const result = await patch({});
+  assert.equal(result.status, 409);
+  assert.equal(ledger().length, 0);
+  assert.equal(policy.hasCompletedNda({ isAdmin: true, ndaCompleted: false }), false);
+});
+
+test("administrator return preserves its own audit identity and does not impersonate the assignee", async () => {
+  globalThis[stateKey].actor.isAdmin = true;
+  sqlite.prepare("UPDATE approvals SET type='技术审核',current_reviewer_email='other@example.com' WHERE id='labor-test'").run();
+  const result = await patch({ action: "return", note: "请补充技术测试证据" });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.approval.status, "已退回");
+  assert.equal(ledger()[0].actor_email, owner.email);
+  assert.match(ledger()[0].note, /系统管理员退回/);
+});
+
+test("administrator can approve another person's valid signed confidentiality agreement", async () => {
+  globalThis[stateKey].actor.isAdmin = true;
+  // Synthetic ink fixture, used only in the isolated in-memory test database.
+  const signatureDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA4QAAAEECAYAAABwYfrKAAAEcUlEQVR4nO3XwYkCABAEQdMxCj+Xf0qagswJDUsVdATzmscDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAvvD8e731v+oNAQAAJvWZulC9IQAAwKQ+UxeqNwQAAJjUZ+pC9YYAAACT+kxdqN4QAABgUp+pC9UbAgAATOozdaF6QwAAgEl9pi5UbwgAADCpz9SF6g0BAAAm9Zm6UL0hAADApD5TF6o3BAAAmNRn6kL1hgAAAJP6TF2o3hAAAGBSn6kL1RsCAABM6jN1oXpDAACASX2mLlRvCAAAMKnP1IXqDQEAACb1mbpQvSEAAMCkPlMXqjcEAACY1GfqQvWGAAAAk/pMXajeEAAAYFKfqQvVGwIAAEzqM3WhekMAAIBJfaYuVG8IAAAwqc/UheoNAQAAJvWZulC9IQAAwKQ+UxeqNwQAAJjUZ+pC9YYAAACT+kxdqN4QAABgUp+pC9UbAgAATOozdaF6QwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPipD0aPXTZV6f/2AAAAAElFTkSuQmCC";
+  const payload = { agreementKind: "project_owner", agreementVersion: ndaAgreement.confidentialityAgreementVersions("project_owner")[0], signerName: "测试申请人", signerEmail: "applicant@example.com", signerAccountUserId: "email:applicant@example.com", confidentialScope: "本地测试材料保密范围", signatureDataUrl, signedAt: "2026-09-01T00:00:00.000Z", previewed: true, agreed: true };
+  sqlite.prepare("UPDATE approvals SET type='保密协议',current_step='OA管理员',current_reviewer_email='other@example.com',payload_json=? WHERE id='labor-test'").run(JSON.stringify(payload));
+  const result = await patch({});
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.approval.status, "已归档");
+  assert.equal(result.body.approval.payload.signerAccountUserId, payload.signerAccountUserId);
+  assert.equal(result.body.approval.payload.signatureDataUrl, signatureDataUrl);
+  assert.equal(result.body.approval.payload.administratorReviews[0].accountUserId, owner.accountUserId);
+  assert.equal(ledger()[0].actor_email, owner.email);
 });

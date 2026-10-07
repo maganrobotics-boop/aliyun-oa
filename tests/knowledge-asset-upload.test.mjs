@@ -58,10 +58,11 @@ function fixture(t, through = 3) {
   t.after(() => sqlite.close());
   sqlite.exec(`
     CREATE TABLE migration_control (id TEXT PRIMARY KEY, deactivated_at TEXT);
-    CREATE TABLE knowledge_items (id TEXT PRIMARY KEY, current_revision_id TEXT, active_revision_id TEXT, status TEXT);
+    CREATE TABLE knowledge_items (id TEXT PRIMARY KEY, current_revision_id TEXT, active_revision_id TEXT, status TEXT, revoked_at TEXT, submitter_member_id TEXT DEFAULT 'submitter', submitter_email TEXT DEFAULT 'submit@example.com');
+    CREATE TABLE knowledge_events (item_id TEXT, action TEXT, note TEXT, actor_member_id TEXT, actor_email TEXT);
     CREATE TABLE knowledge_revisions (id TEXT PRIMARY KEY, item_id TEXT, status TEXT, content TEXT DEFAULT '');
     CREATE TABLE knowledge_revision_parts (revision_id TEXT, item_id TEXT, part_no INTEGER, content TEXT);
-    INSERT INTO knowledge_items VALUES ('item', 'revision', NULL, 'pending');
+    INSERT INTO knowledge_items (id, current_revision_id, active_revision_id, status) VALUES ('item', 'revision', NULL, 'pending');
     INSERT INTO knowledge_revisions VALUES ('revision', 'item', 'pending', '');
   `);
   for (const migration of migrations.slice(0, through)) sqlite.exec(migration);
@@ -213,4 +214,14 @@ test("knowledge approval asset readiness follows markdown references across revi
   await assert.rejects(assertKnowledgeRevisionAssetsReady(database, "item", "revision"), /尚未完整上传/);
   await finalizeKnowledgeAssets(database, manifest({ expectedPaths: ["assets/figure.png", "assets/second_image.webp", "assets/extra.jpg"] }));
   await assertKnowledgeRevisionAssetsReady(database, "item", "revision");
+});
+
+
+test("owner withdrawal prevents attachment staging and finalization", async (t) => {
+  const { sqlite, database, bucket } = fixture(t);
+  sqlite.exec("INSERT INTO knowledge_events VALUES ('item', 'revoked', '投稿人删除自己上传的资料', 'submitter', 'submit@example.com')");
+  await assert.rejects(stageKnowledgeAsset(database, bucket, input()), /not pending/);
+  await assert.rejects(finalizeKnowledgeAssets(database, manifest()), /not pending/);
+  assert.equal(bucket.writes, 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM knowledge_revision_assets").get().n, 0);
 });

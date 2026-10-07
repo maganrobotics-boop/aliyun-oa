@@ -3,6 +3,7 @@ import { OA_CHAT_ORIGIN, OA_CHAT_PATH, signOaChatRequest } from '../chat-cloudfl
 import { getDb } from '../db';
 import { listKnowledgeRevisionAssets } from './knowledge-assets';
 import { knowledgeImageReferences } from './knowledge-image-references.mjs';
+import { knowledgeImageReferenceScore, relevantKnowledgeImageReferences, requestedKnowledgeImageKinds } from './knowledge-image-relevance.mjs';
 import type { RankedKnowledgeChunk } from './knowledge-policy';
 import { questionAllowsGeneralKnowledge, questionPrefersGeneralKnowledge, questionRequestsKnowledgeImages, questionRequiresKnowledgeEvidence } from '../chat-cloudflare/src/question-scope.mjs';
 export { questionAllowsGeneralKnowledge, questionPrefersGeneralKnowledge, questionRequestsKnowledgeImages, questionRequiresKnowledgeEvidence } from '../chat-cloudflare/src/question-scope.mjs';
@@ -116,12 +117,9 @@ export async function oaChatModelStatus() {
     return { bridgeReady: result.bridgeReady === true, modelReady: result.modelReady === true, budgetReady: result.budgetReady === true };
   } catch { return { bridgeReady: false, modelReady: false, budgetReady: false }; }
 }
-const ROBOT_IMAGE_KIND_PATTERN = /(?:四足|轮足|轮式|双臂|机械臂|开放式|人形|履带|无人机)/gu;
 function imageChunkScore(question: string, chunk: RankedKnowledgeChunk, refs: Map<string, string>): number {
   const haystack = `${chunk.title}\n${chunk.sectionTitle || ''}\n${chunk.content}\n${[...refs.values()].join('\n')}`.normalize('NFKC');
-  const kinds = [...new Set(question.normalize('NFKC').match(ROBOT_IMAGE_KIND_PATTERN) || [])];
-  if (kinds.length && !kinds.every(kind => haystack.includes(kind))) return -10_000;
-  let score = 0;
+  let score = Math.max(0, ...[...refs.values()].map(alt => knowledgeImageReferenceScore(question, chunk, alt, refs.size)));
   if (/(?:OriginMind|ARTS\s*Robotics|机器人产品|实验平台)/iu.test(haystack)) score += 500;
   if (/(?:实验室|机器人)/u.test(haystack)) score += 120;
   if (/(?:硕士学位论文|博士学位论文|论文封面|公式|示意图)/u.test(haystack)) score -= 500;
@@ -131,21 +129,41 @@ function imageChunkScore(question: string, chunk: RankedKnowledgeChunk, refs: Ma
   return score;
 }
 async function answerImages(question: string, chunks: RankedKnowledgeChunk[], includeRevisionImages = false): Promise<OaChatImage[]> {
-  const references = chunks.map(chunk => ({ chunk, refs: knowledgeImageReferences(chunk.content) }))
+  const references = chunks.map(chunk => ({ chunk, refs: relevantKnowledgeImageReferences(question, chunk) }))
     .filter(item => includeRevisionImages || item.refs.size);
   if (!references.length) return [];
-  const db = await getDb(); const candidates: Array<{ chunk: RankedKnowledgeChunk; refs: Map<string, string>; assets: Awaited<ReturnType<typeof listKnowledgeRevisionAssets>>; score: number }> = [];
+  const db = await getDb();
+  const hasKinds = requestedKnowledgeImageKinds(question).length > 0;
+  type Candidate = { chunk: RankedKnowledgeChunk; refs: Map<string, string>; imageScores: Map<string, number>; assets: Awaited<ReturnType<typeof listKnowledgeRevisionAssets>>; score: number };
+  const candidates = new Map<string, Candidate>();
   for (const { chunk, refs } of references) {
-    const assets = await listKnowledgeRevisionAssets(db.$client, chunk.revisionId);
-    if (assets.some(asset => asset.itemId === chunk.itemId)) candidates.push({ chunk, refs, assets, score: imageChunkScore(question, chunk, refs) });
+    const key = `${chunk.itemId}:${chunk.revisionId}`;
+    let candidate = candidates.get(key);
+    if (!candidate) {
+      const assets = await listKnowledgeRevisionAssets(db.$client, chunk.revisionId);
+      if (!assets.some(asset => asset.itemId === chunk.itemId && asset.revisionId === chunk.revisionId)) continue;
+      candidate = { chunk, refs: new Map(), imageScores: new Map(), assets, score: -10_000 };
+      candidates.set(key, candidate);
+    }
+    const readyPaths = new Set(candidate.assets.filter(asset => asset.itemId === chunk.itemId && asset.revisionId === chunk.revisionId).map(asset => asset.assetPath));
+    const availableRefs = new Map([...refs].filter(([path]) => readyPaths.has(path)));
+    if (hasKinds && !availableRefs.size) continue;
+    candidate.score = Math.max(candidate.score, imageChunkScore(question, chunk, availableRefs));
+    for (const [path, alt] of availableRefs) {
+      const score = knowledgeImageReferenceScore(question, chunk, alt, knowledgeImageReferences(chunk.content).size);
+      if (!candidate.refs.has(path) || score > (candidate.imageScores.get(path) || 0)) {
+        candidate.refs.set(path, alt); candidate.imageScores.set(path, score);
+      }
+    }
   }
-  const selected = candidates.filter(candidate => candidate.score > -10_000).sort((a, b) => b.score - a.score)[0];
+  const selected = [...candidates.values()].filter(candidate => !hasKinds || candidate.refs.size)
+    .sort((a, b) => b.score - a.score)[0];
   if (!selected) return [];
   const images: OaChatImage[] = []; const seen = new Set<string>();
-  for (const { chunk, refs, assets } of [selected]) {
-    for (const asset of assets) {
+  for (const { chunk, refs, imageScores, assets } of [selected]) {
+    for (const asset of [...assets].sort((a, b) => (imageScores.get(b.assetPath) || 0) - (imageScores.get(a.assetPath) || 0))) {
       const identity = `${chunk.itemId}:${chunk.revisionId}:${asset.assetPath}`;
-      if (asset.itemId !== chunk.itemId || (!includeRevisionImages && !refs.has(asset.assetPath)) || seen.has(identity)) continue;
+      if (asset.itemId !== chunk.itemId || asset.revisionId !== chunk.revisionId || ((!includeRevisionImages || hasKinds) && !refs.has(asset.assetPath)) || seen.has(identity)) continue;
       seen.add(identity);
       images.push({
         url: `/api/knowledge/${encodeURIComponent(chunk.itemId)}/assets/${asset.assetPath.split('/').map(encodeURIComponent).join('/')}?forChat=1&revision=${encodeURIComponent(chunk.revisionId)}`,
@@ -164,6 +182,7 @@ export async function answerOaChatQuestion(question: string, ranked: RankedKnowl
   // For image requests, keep a broader text-ranked window so a legacy
   // text-only item cannot mask a newer approved revision with ready assets.
   const chunks = ranked.slice(0, imageRequest ? 12 : 3);
+  if (imageRequest && !chunks.length) return { answer: '当前没有找到与你的问题相关、且你有权查看的已审核资料图片。请换一个更具体的名称，或打开 OA 查看。', citations: [], images: [], mode: 'no_evidence', sourceType: 'oa_knowledge_images_unavailable' };
   const generalKnowledge = chunks.length
     ? questionPrefersGeneralKnowledge(question)
     : questionAllowsGeneralKnowledge(question);
@@ -188,8 +207,10 @@ export async function answerOaChatQuestion(question: string, ranked: RankedKnowl
   }));
   const citations = chunks.map((chunk, index) => ({ id: String(index + 1), itemId: chunk.itemId, revisionId: chunk.revisionId, title: chunk.title, category: chunk.category, sectionTitle: chunk.sectionTitle, paragraphRef: chunk.paragraphRef, excerpt: prefix(chunk.content, 600) }));
   let images: OaChatImage[] = [];
-  try { images = await answerImages(question, chunks, imageRequest); } catch { /* A failed image lookup must not discard the complete text. */ }
+  let imageLookupFailed = false;
+  try { images = await answerImages(question, chunks, imageRequest); } catch { imageLookupFailed = true; /* Keep ordinary text answers available. */ }
   if (imageRequest) {
+    if (imageLookupFailed) return { answer: '资料图片暂时无法查询，请稍后重试或打开 OA 查看。', citations, images: [], mode: 'retrieval', sourceType: 'oa_knowledge_images_unavailable' };
     if (images.length) return { answer: `已找到 ${images.length} 张与问题相关的已审核资料图片，显示如下。`, citations, images, mode: 'ai', sourceType: 'oa_knowledge_images' };
     return { answer: '已找到相关文字资料，但当前已审核版本没有可展示的图片。请由管理员在知识资料中补充图片并完成审核后再试。', citations, images: [], mode: 'no_evidence', sourceType: 'oa_knowledge_images_unavailable' };
   }
@@ -214,4 +235,3 @@ export async function generateOaTask(input: { kind: string; title: string; instr
   if (result.mode !== 'task' || typeof result.answer !== 'string' || !result.answer.trim()) throw new Error('TASK_MODEL_UNAVAILABLE');
   return result.answer;
 }
-

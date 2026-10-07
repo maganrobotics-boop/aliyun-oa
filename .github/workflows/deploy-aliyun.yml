@@ -1,17 +1,8 @@
 name: Deploy oa to Aliyun
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      # Release tooling is installed separately; a tooling-only merge must not
-      # replace newer production application code with the repository snapshot.
-      - 'deploy/aliyun/**'
-      - 'tests/aliyun-release-preflight.test.py'
-      - '.github/workflows/check-aliyun-release-preflight.yml'
-      - '.github/workflows/deploy-aliyun.yml'
+  # Production-source reconciliation uses a verified manual release.
+  # Keep source merges from invoking the legacy server deploy concurrently.
 concurrency:
   group: deploy-oa-production
   cancel-in-progress: false

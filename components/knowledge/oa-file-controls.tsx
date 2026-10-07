@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Archive, FileText, FolderOpen, Plus, RotateCcw } from 'lucide-react';
 import { CHAT_ATTACHMENT_ACCEPT, type ChatAttachmentBundle } from '@/lib/oa-chat-attachments.mjs';
-import { submitKnowledgePackage } from '@/lib/knowledge-package.mjs';
+import { reviseKnowledgePackage, submitKnowledgePackage, type KnowledgePackage } from '@/lib/knowledge-package.mjs';
+import { OaKnowledgeDraftFields, type KnowledgeTextDraft } from './oa-knowledge-draft-fields';
 import type { ChatDocumentTask } from '@/lib/oa-chat-documents.mjs';
 import './oa-file-controls.css';
 
@@ -21,9 +22,9 @@ export function OaUploadRules() {
   }, []);
   return <div className="oa-upload-rules">
     <p><strong>支持格式：</strong>TXT、MD、PDF、DOCX、PNG、JPG、WebP；可选 ZIP 或文件夹。</p>
-    <p>文本 ≤ 5 MB / 个；文档 ≤ 10 MB / 个；图片 ≤ 8 MB / 张。每次最多 100 个文件，合计 ≤ 100 MB。</p>
-    <p>ZIP ≤ 50 MB，解压后 ≤ 100 MB；ZIP 请单独选择，包内不能再含 ZIP。TXT、MD 请保存为 UTF-8。</p>
-    {binaryReady === false && <p className="oa-file-warning" role="status">此站点尚未接入 PDF、DOCX 和图片自动解析。请先转为 TXT / MD；已有 Markdown 和图片时，可在侧栏“上传资料”中选择“标准图文包”。</p>}
+    <p>文本 ≤ 5 MB / 个；文档 ≤ 10 MB / 个；图片 ≤ 8 MB / 张。每次最多 100 个文件，合计 ≤ 200 MB。</p>
+    <p>ZIP ≤ 100 MB，解压后 ≤ 200 MB；ZIP 请单独选择，包内不能再含 ZIP。TXT、MD 请保存为 UTF-8。支持多章节 Markdown＋assets 图片包及 manifest.json 目录，已有图文包无需重复识图。</p>
+    {binaryReady === false && <p className="oa-file-warning" role="status">此站点尚未接入 PDF、DOCX 和图片自动解析。请先转为 TXT / MD；已有 Markdown 和图片时，可在侧栏“上传资料”中选择“图文包”。</p>}
     {binaryReady === true && <p>当前可自动解析：{formats.length ? formats.map(format => format.toUpperCase()).join("、") : "PDF、DOCX 和图片"}。{notice || "加密文档、宏和损坏文件不支持解析。"}</p>}
     {binaryReady === null && <p>PDF、DOCX 和图片需要自动解析服务；若解析不可用，请先转为 TXT 或 MD。</p>}
     <p>先解析预览，再确认提交 OA 审核。知识库保存正文和单独上传的图片；PDF、DOCX 原文件不在此处归档。</p>
@@ -73,22 +74,29 @@ function ArchiveConfirm({ busy, confirmed, setConfirmed, onSubmit, onCancel }: {
     <div className="oa-file-actions"><button type="button" disabled={!confirmed || busy} onClick={onSubmit}>{busy ? '正在核对并提交…' : '确认归档并提交 OA'}</button><button type="button" disabled={busy} onClick={onCancel}>取消</button></div>
   </div>;
 }
-export function OaSourceArchive({ bundle, onSubmitted }: { bundle: ChatAttachmentBundle; onSubmitted?: () => void }) {
+export function OaSourceArchive({ bundle, onSubmitted, editorVisible = false, onBusyChange }: { bundle: ChatAttachmentBundle; onSubmitted?: () => void; editorVisible?: boolean; onBusyChange?: (busy: boolean) => void }) {
   const [open, setOpen] = useState(false), [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(false);
   const [error, setError] = useState(''), [progress, setProgress] = useState(''), [item, setItem] = useState<{ id: string; status: string } | null>(null);
   const lock = useRef(false), live = useRef(true);
+  const [draft, setDraft] = useState<KnowledgeTextDraft>({ title: bundle.pkg.title, body: bundle.pkg.body });
+  const [attempted, setAttempted] = useState(false);
+  const prepared = useRef<KnowledgePackage | null>(null);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   async function submit() {
     if (lock.current || !confirmed || item) return;
-    lock.current = true; setBusy(true); setError('');
+    lock.current = true; setBusy(true); onBusyChange?.(true); setError('');
     try {
-      const receipt = await submitKnowledgePackage(bundle.pkg, { onProgress: text => { if (live.current) setProgress(text); } });
+      if (!prepared.current) prepared.current = await reviseKnowledgePackage(bundle.pkg, draft);
+      if (live.current) setAttempted(true);
+      const receipt = await submitKnowledgePackage(prepared.current, { onProgress: text => { if (live.current) setProgress(text); } });
       if (live.current) { setItem(receipt.item); setOpen(false); onSubmitted?.(); }
     } catch (cause) { if (live.current) setError(cause instanceof Error ? cause.message : '归档未确认，请重试。'); }
-    finally { lock.current = false; if (live.current) setBusy(false); }
+    finally { lock.current = false; if (live.current) { setBusy(false); onBusyChange?.(false); } }
   }
   return <section className="oa-file-archive" aria-label="原始资料归档">
-    {!item && !open && <button type="button" className="oa-file-archive-button" onClick={() => setOpen(true)}><Archive size={16} />归档资料</button>}
+    {(editorVisible || open) && <OaKnowledgeDraftFields draft={draft} images={bundle.pkg.availableImages || bundle.pkg.images} disabled={busy || attempted || Boolean(item)} onChange={next => { setDraft(next); setConfirmed(false); setError(''); prepared.current = null; }} />}
+    {!item && !open && <button type="button" className="oa-file-archive-button" onClick={() => setOpen(true)}><Archive size={16} />{editorVisible ? '确认内容并提交审核' : '编辑并归档资料'}</button>}
+    {attempted && error && <p>已开始提交，请保留当前内容重试；重新选择资料可创建新的可编辑草稿。</p>}
     {open && <ArchiveConfirm busy={busy} confirmed={confirmed} setConfirmed={setConfirmed} onSubmit={() => void submit()} onCancel={() => setOpen(false)} />}
     {progress && !item && <p role="status">{progress}</p>}{error && <p role="alert" className="oa-file-warning">{error}</p>}
     {item && <p role="status">{statusText[item.status] || 'OA 已接收，待核对审核状态'} · 编号 {item.id}</p>}

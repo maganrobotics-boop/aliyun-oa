@@ -83,13 +83,13 @@ const vite = await createServer({
 });
 const route = await vite.ssrLoadModule("/app/api/knowledge/import-chat/route.ts");
 const statusRoute = await vite.ssrLoadModule("/app/api/knowledge/import-chat/status/route.ts");
-const origin = "https://chat.omindos.ai";
+const origin = "https://chat.omindos.cn";
 const document = { id: "11111111-2222-4333-8444-555555555555", title: "机器人技术资料", body: "本资料由 Chat 管理导入，需经 OA 审核后方可进入知识库。", url: "", category: "research", updatedAt: "2026-09-12" };
 function request(body = { document }, requestOrigin = origin) {
-  return new Request("https://oa.omindos.ai/api/knowledge/import-chat", { method: "POST", headers: { origin: requestOrigin, "content-type": "application/json", "x-originmind-public-lab-ai-service-token": "A".repeat(43) }, body: JSON.stringify(body) });
+  return new Request("https://oa.omindos.cn/api/knowledge/import-chat", { method: "POST", headers: { origin: requestOrigin, "content-type": "application/json", "x-originmind-public-lab-ai-service-token": "A".repeat(43) }, body: JSON.stringify(body) });
 }
 function statusRequest(body = { document }, requestOrigin = origin, contentType = "application/json") {
-  return new Request("https://oa.omindos.ai/api/knowledge/import-chat/status", {
+  return new Request("https://oa.omindos.cn/api/knowledge/import-chat/status", {
     method: "POST",
     headers: { origin: requestOrigin, "content-type": contentType, "x-originmind-public-lab-ai-service-token": "A".repeat(43) },
     body: JSON.stringify(body),
@@ -124,8 +124,8 @@ beforeEach(() => {
 after(async () => { await vite.close(); delete globalThis[stateKey]; });
 
 test("only the exact Chat origin gets a credentialed preflight", async () => {
-  for (const requestOrigin of [origin, "https://evil.example", "null", "https://chat.omindos.ai.evil.example"]) {
-    const response = await route.OPTIONS(new Request("https://oa.omindos.ai/api/knowledge/import-chat", { method: "OPTIONS", headers: { origin: requestOrigin, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } }));
+  for (const requestOrigin of [origin, "https://evil.example", "null", "https://chat.omindos.cn.evil.example"]) {
+    const response = await route.OPTIONS(new Request("https://oa.omindos.cn/api/knowledge/import-chat", { method: "OPTIONS", headers: { origin: requestOrigin, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } }));
     assert.equal(response.status, requestOrigin === origin ? 204 : 403);
     assert.equal(response.headers.get("access-control-allow-origin"), requestOrigin === origin ? origin : null);
   }
@@ -242,7 +242,7 @@ test("a returned multipart import updates the same item to revision +1 with one 
     sourceLabel: globalThis[stateKey].resubmits[0].submission.sourceLabel,
     sourceUrl: globalThis[stateKey].resubmits[0].submission.sourceUrl,
   }, {
-    title: "原标题",
+    title: changedDocument.title,
     category: "课题参与",
     sourceLabel: "Chat 管理导入 · 2026-08-01 · 原标题",
     sourceUrl: "https://example.com/original",
@@ -307,14 +307,14 @@ test("returned imports cannot manufacture a new revision by changing only Chat m
   globalThis[stateKey].existing = returnedItem();
   globalThis[stateKey].hashExists = true;
   const first = await route.POST(request({
-    document: { ...document, title: "伪造标题一", category: "business", updatedAt: "2026-09-13", url: "" },
+    document: { ...document, title: "用户修改的题目", category: "business", updatedAt: "2026-09-13", url: "" },
     returnedKnowledgeItemId,
   }));
   assert.equal(first.status, 409);
   const firstHash = globalThis[stateKey].hashChecks.at(-1).hash;
 
   const second = await route.POST(request({
-    document: { ...document, title: "伪造标题二", category: "student", updatedAt: "2026-09-14", url: "https://evil.example/replacement" },
+    document: { ...document, title: "用户修改的题目", category: "student", updatedAt: "2026-09-14", url: "https://evil.example/replacement" },
     returnedKnowledgeItemId,
   }));
   assert.equal(second.status, 409);
@@ -336,15 +336,15 @@ test("a rate-limited returned import never reaches item or revision lookups", as
 });
 
 test("status verification exposes credentialed CORS only to the exact Chat origin", async () => {
-  for (const requestOrigin of [origin, "https://evil.example", "null", "https://chat.omindos.ai.evil.example"]) {
-    const response = await statusRoute.OPTIONS(new Request("https://oa.omindos.ai/api/knowledge/import-chat/status", {
+  for (const requestOrigin of [origin, "https://evil.example", "null", "https://chat.omindos.cn.evil.example"]) {
+    const response = await statusRoute.OPTIONS(new Request("https://oa.omindos.cn/api/knowledge/import-chat/status", {
       method: "OPTIONS",
       headers: { origin: requestOrigin, "access-control-request-method": "POST", "access-control-request-headers": "content-type" },
     }));
     assert.equal(response.status, requestOrigin === origin ? 204 : 403);
     assert.equal(response.headers.get("access-control-allow-origin"), requestOrigin === origin ? origin : null);
   }
-  const disallowedHeader = await statusRoute.OPTIONS(new Request("https://oa.omindos.ai/api/knowledge/import-chat/status", {
+  const disallowedHeader = await statusRoute.OPTIONS(new Request("https://oa.omindos.cn/api/knowledge/import-chat/status", {
     method: "OPTIONS",
     headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type, authorization" },
   }));

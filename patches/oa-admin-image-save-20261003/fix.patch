@@ -1,0 +1,560 @@
+--- a/lib/knowledge-store.ts
++++ b/lib/knowledge-store.ts
+@@ -24,7 +24,11 @@
+   type KnowledgeListOptions,
+   type KnowledgeListSort,
+ } from "./knowledge-types";
+-import { listKnowledgeRevisionAssets, referencedKnowledgeAssetPaths } from "./knowledge-assets";
++import {
++  copyKnowledgeRevisionAssets, discardUnreferencedKnowledgeAssetCopies,
++  listKnowledgeRevisionAssets, referencedKnowledgeAssetPaths,
++} from "./knowledge-assets";
++import { getKnowledgeAssetsBucket } from "./knowledge-assets-env";
+ 
+ const KNOWLEDGE_LIST_LIMIT = 1000;
+ // Retrieval ranks at most six chunks. Keep the candidate pool large enough for
+@@ -919,72 +923,102 @@
+   if (chunks.length > MAX_KNOWLEDGE_CHUNKS) throw new Error("knowledge chunk limit exceeded");
+   const now = timestampAfter(existing.updated_at), revisionId = crypto.randomUUID(), mutationRevision = crypto.randomUUID();
+   const revisionNo = Number(existing.current_revision_no) + 1, guard = actorGuard(actor, true);
+-  const revisionStatus = existing.status;
+   const active = existing.status === "active";
+-  const statements: D1PreparedStatement[] = [database.prepare(`
+-    UPDATE knowledge_items AS i SET title = ?, current_revision_no = ?, current_revision_id = ?,
+-      active_revision_id = CASE WHEN status = 'active' THEN ? ELSE active_revision_id END,
+-      mutation_revision = ?, updated_at = ?
+-    WHERE id = ? AND status = ? AND current_revision_id = ? AND mutation_revision = ?
+-      AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL} AND ${guard.sql}
+-      ${paths.length ? `AND NOT EXISTS (SELECT 1 FROM json_each(?) AS required_asset WHERE NOT EXISTS (
+-        SELECT 1 FROM knowledge_revision_assets AS source_asset WHERE source_asset.item_id = i.id
+-        AND source_asset.revision_id = i.current_revision_id
+-        AND source_asset.asset_path = required_asset.value AND source_asset.upload_state = 'ready'))` : ""}
+-    RETURNING *
+-  `).bind(submission.title, revisionNo, revisionId, revisionId, mutationRevision, now,
+-    existing.id, existing.status, existing.current_revision_id, existing.mutation_revision,
+-    ...guard.values, ...(paths.length ? [JSON.stringify(paths)] : [])),
+-  database.prepare(`
+-    INSERT INTO knowledge_revisions (
+-      id, item_id, revision_no, previous_revision_id, title, category, content, summary, source_label, source_url,
+-      content_hash, status, created_by_member_id, created_by_name, created_by_email,
+-      reviewed_by_member_id, reviewed_by_name, reviewed_by_email, review_note,
+-      created_at, reviewed_at, activated_at, retired_at
+-    )
+-    SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+-    WHERE EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)
+-  `).bind(revisionId, existing.id, revisionNo, existing.current_revision_id, submission.title, submission.category,
+-    storageParts.length ? "" : submission.content, submission.summary, submission.sourceLabel, submission.sourceUrl,
+-    contentHash, revisionStatus, actor.memberId, actor.name, normalizeEmail(actor.email),
+-    active ? actor.memberId : existing.reviewed_by_member_id, active ? actor.name : existing.reviewed_by_name,
+-    active ? normalizeEmail(actor.email) : existing.reviewed_by_email,
+-    active ? "管理员直接修改" : existing.review_note || "", now,
+-    active ? now : existing.reviewed_at, active ? now : existing.activated_at, existing.retired_at,
+-    existing.id, revisionId, mutationRevision)];
+-  statements.push(...knowledgePartInsertStatements(database, existing.id, revisionId, mutationRevision, now, storageParts, existing.status));
+-  if (active) statements.push(database.prepare(`
+-    UPDATE knowledge_revisions SET status = 'superseded', retired_at = ? WHERE item_id = ? AND id = ?
+-      AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)
+-  `).bind(now, existing.id, existing.current_revision_id, existing.id, revisionId, mutationRevision));
+-  if (paths.length) {
+-    const assets = paths.map(path => ({ id: crypto.randomUUID(), path }));
+-    statements.push(database.prepare(`
++  // Image metadata may only be inserted into a pending revision. Stage and
++  // activate within the same D1 transaction so readers never see a partial edit.
++  const stageImages = active && paths.length > 0;
++  const bucket = paths.length ? await getKnowledgeAssetsBucket() : null;
++  const copies = bucket ? await copyKnowledgeRevisionAssets(
++    database, bucket, existing.id, existing.current_revision_id, revisionId, paths,
++  ) : [];
++  try {
++    const statements: D1PreparedStatement[] = [database.prepare(`
++      UPDATE knowledge_items AS i SET title = ?, current_revision_no = ?, current_revision_id = ?,
++        active_revision_id = CASE WHEN status = 'active' THEN ? ELSE active_revision_id END,
++        mutation_revision = ?, updated_at = ?
++      WHERE id = ? AND status = ? AND current_revision_id = ? AND mutation_revision = ?
++        AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL} AND ${guard.sql}
++        ${paths.length ? `AND NOT EXISTS (SELECT 1 FROM json_each(?) AS required_asset WHERE NOT EXISTS (
++          SELECT 1 FROM knowledge_revision_assets AS source_asset WHERE source_asset.item_id = i.id
++          AND source_asset.revision_id = i.current_revision_id
++          AND source_asset.asset_path = required_asset.value AND source_asset.upload_state = 'ready'))` : ""}
++      RETURNING *
++    `).bind(submission.title, revisionNo, revisionId, stageImages ? existing.active_revision_id : revisionId, mutationRevision, now,
++      existing.id, existing.status, existing.current_revision_id, existing.mutation_revision,
++      ...guard.values, ...(paths.length ? [JSON.stringify(paths)] : [])),
++    database.prepare(`
++      INSERT INTO knowledge_revisions (
++        id, item_id, revision_no, previous_revision_id, title, category, content, summary, source_label, source_url,
++        content_hash, status, created_by_member_id, created_by_name, created_by_email,
++        reviewed_by_member_id, reviewed_by_name, reviewed_by_email, review_note,
++        created_at, reviewed_at, activated_at, retired_at
++      )
++      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
++      WHERE EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)
++    `).bind(revisionId, existing.id, revisionNo, existing.current_revision_id, submission.title, submission.category,
++      storageParts.length ? "" : submission.content, submission.summary, submission.sourceLabel, submission.sourceUrl,
++      contentHash, stageImages ? "pending" : existing.status, actor.memberId, actor.name, normalizeEmail(actor.email),
++      stageImages ? null : active ? actor.memberId : existing.reviewed_by_member_id,
++      stageImages ? null : active ? actor.name : existing.reviewed_by_name,
++      stageImages ? null : active ? normalizeEmail(actor.email) : existing.reviewed_by_email,
++      stageImages ? "" : active ? "管理员直接修改" : existing.review_note || "", now,
++      stageImages ? null : active ? now : existing.reviewed_at,
++      stageImages ? null : active ? now : existing.activated_at, stageImages ? null : existing.retired_at,
++      existing.id, revisionId, mutationRevision)];
++    statements.push(...knowledgePartInsertStatements(database, existing.id, revisionId, mutationRevision, now, storageParts, existing.status));
++    if (copies.length) statements.push(database.prepare(`
+       INSERT INTO knowledge_revision_assets
+         (id, item_id, revision_id, asset_path, mime_type, byte_size, storage_key, sha256, upload_token, upload_state, created_at)
+       SELECT json_extract(asset.value, '$.id'), source.item_id, ?, source.asset_path, source.mime_type,
+-        source.byte_size, source.storage_key, source.sha256, source.upload_token, 'ready', ?
++        source.byte_size, json_extract(asset.value, '$.storageKey'), source.sha256,
++        json_extract(asset.value, '$.uploadToken'), 'ready', ?
+       FROM json_each(?) AS asset JOIN knowledge_revision_assets AS source
+-        ON source.asset_path = json_extract(asset.value, '$.path')
++        ON source.id = json_extract(asset.value, '$.sourceId') AND source.asset_path = json_extract(asset.value, '$.path')
+       WHERE source.item_id = ? AND source.revision_id = ? AND source.upload_state = 'ready'
+         AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)
+-    `).bind(revisionId, now, JSON.stringify(assets), existing.id, existing.current_revision_id, existing.id, revisionId, mutationRevision));
+-  }
+-  if (active) {
+-    statements.push(database.prepare(`UPDATE knowledge_chunks SET is_active = 0 WHERE item_id = ? AND is_active = 1
+-      AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)`)
+-      .bind(existing.id, existing.id, revisionId, mutationRevision));
+-    statements.push(...knowledgeChunkInsertStatements(database, existing.id, revisionId, mutationRevision, now, chunks));
+-  }
+-  statements.push(database.prepare(`INSERT INTO knowledge_events
+-    (id,item_id,revision_id,actor_member_id,actor_name,actor_email,action,note,created_at)
+-    SELECT ?,?,?,?,?,?,'admin_edited','管理员修改题目和内容，保留审核状态与可见范围',?
+-    WHERE EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)`)
+-    .bind(crypto.randomUUID(), existing.id, revisionId, actor.memberId, actor.name, normalizeEmail(actor.email), now,
+-      existing.id, revisionId, mutationRevision));
+-  const [result] = await database.batch(statements);
+-  const updated = resultRows(result as D1Result<KnowledgeItemRow>)[0];
+-  return updated ? { ...serializeItem(updated), content: submission.content, summary: submission.summary } : null;
++    `).bind(revisionId, now, JSON.stringify(copies), existing.id, existing.current_revision_id, existing.id, revisionId, mutationRevision));
++    if (stageImages) {
++      statements.push(database.prepare(`
++        UPDATE knowledge_items SET active_revision_id = current_revision_id
++        WHERE id = ? AND status = 'active' AND current_revision_id = ? AND mutation_revision = ?
++          AND active_revision_id = ?
++      `).bind(existing.id, revisionId, mutationRevision, existing.active_revision_id));
++      statements.push(database.prepare(`
++        UPDATE knowledge_revisions SET status = 'active', reviewed_by_member_id = ?, reviewed_by_name = ?,
++          reviewed_by_email = ?, review_note = '管理员直接修改', reviewed_at = ?, activated_at = ?, retired_at = NULL
++        WHERE id = ? AND item_id = ? AND status = 'pending'
++          AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND active_revision_id = ? AND mutation_revision = ?)
++      `).bind(actor.memberId, actor.name, normalizeEmail(actor.email), now, now, revisionId, existing.id,
++        existing.id, revisionId, revisionId, mutationRevision));
++    }
++    if (active) {
++      statements.push(database.prepare(`
++        UPDATE knowledge_revisions SET status = 'superseded', retired_at = ? WHERE item_id = ? AND id = ?
++          AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)
++      `).bind(now, existing.id, existing.current_revision_id, existing.id, revisionId, mutationRevision));
++      statements.push(database.prepare(`UPDATE knowledge_chunks SET is_active = 0 WHERE item_id = ? AND is_active = 1
++        AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)`)
++        .bind(existing.id, existing.id, revisionId, mutationRevision));
++      statements.push(...knowledgeChunkInsertStatements(database, existing.id, revisionId, mutationRevision, now, chunks));
++    }
++    statements.push(database.prepare(`INSERT INTO knowledge_events
++      (id,item_id,revision_id,actor_member_id,actor_name,actor_email,action,note,created_at)
++      SELECT ?,?,?,?,?,?,'admin_edited','管理员修改题目和内容，保留审核状态与可见范围',?
++      WHERE EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)`)
++      .bind(crypto.randomUUID(), existing.id, revisionId, actor.memberId, actor.name, normalizeEmail(actor.email), now,
++        existing.id, revisionId, mutationRevision));
++    const [result] = await database.batch(statements);
++    const updated = resultRows(result as D1Result<KnowledgeItemRow>)[0];
++    if (!updated) {
++      if (bucket) await discardUnreferencedKnowledgeAssetCopies(database, bucket, copies);
++      return null;
++    }
++    return { ...serializeItem({ ...updated, active_revision_id: active ? revisionId : updated.active_revision_id }),
++      content: submission.content, summary: submission.summary };
++  } catch (error) {
++    if (bucket) await discardUnreferencedKnowledgeAssetCopies(database, bucket, copies);
++    throw error;
++  }
+ }
+ 
+ /** Stage an administrator-authored replacement while the last approved revision
+--- a/lib/knowledge-assets.ts
++++ b/lib/knowledge-assets.ts
+@@ -80,6 +80,69 @@
+   id: string; item_id: string; revision_id: string; asset_path: string; mime_type: string;
+   byte_size: number; storage_key: string; sha256: string; upload_token: string; upload_state: string;
+ };
++
++export type KnowledgeAssetCopy = {
++  id: string;
++  sourceId: string;
++  path: string;
++  storageKey: string;
++  uploadToken: string;
++};
++
++// Only remove this edit's objects, and only while no committed revision uses them.
++// If either store is unavailable, retain the object rather than risk deleting data.
++export async function discardUnreferencedKnowledgeAssetCopies(
++  database: D1Database, bucket: R2Bucket, copies: readonly KnowledgeAssetCopy[],
++): Promise<void> {
++  for (const copy of copies) {
++    try {
++      const referenced = await database.prepare(
++        "SELECT 1 FROM knowledge_revision_assets WHERE storage_key = ? LIMIT 1",
++      ).bind(copy.storageKey).first();
++      if (referenced) continue;
++      const object = await bucket.get(copy.storageKey);
++      if (object?.customMetadata?.uploadToken === copy.uploadToken) await bucket.delete(copy.storageKey);
++    } catch { /* Preserve committed data and the original save error. */ }
++  }
++}
++
++/** Preserve original bytes under distinct immutable keys for the new revision. */
++export async function copyKnowledgeRevisionAssets(
++  database: D1Database, bucket: R2Bucket, itemId: string, sourceRevisionId: string,
++  targetRevisionId: string, paths: readonly string[],
++): Promise<KnowledgeAssetCopy[]> {
++  if (paths.length > MAX_KNOWLEDGE_ASSETS) throw new Error("单份知识资料图片数量过多。");
++  const copies: KnowledgeAssetCopy[] = [];
++  try {
++    for (const path of paths) {
++      const source = await database.prepare(`
++        SELECT * FROM knowledge_revision_assets
++        WHERE item_id = ? AND revision_id = ? AND asset_path = ? AND upload_state = 'ready'
++      `).bind(itemId, sourceRevisionId, path).first<AssetRow>();
++      if (!source) throw new Error("修改后的正文引用了未上传的图片。");
++      const object = await bucket.get(source.storage_key);
++      if (!object || object.size !== Number(source.byte_size)) throw new Error("原版本图片文件缺失或大小不一致。");
++      const bytes = await object.arrayBuffer();
++      if (bytes.byteLength !== Number(source.byte_size) || await knowledgeAssetSha256(bytes) !== source.sha256) {
++        throw new Error("原版本图片校验失败。");
++      }
++      const copy = {
++        id: crypto.randomUUID(), sourceId: source.id, path: normalizeKnowledgeAssetPath(path),
++        storageKey: knowledgeAssetStorageKey(itemId, targetRevisionId, path), uploadToken: crypto.randomUUID(),
++      };
++      copies.push(copy);
++      const written = await bucket.put(copy.storageKey, bytes, {
++        onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: source.mime_type },
++        customMetadata: { sha256: source.sha256, uploadToken: copy.uploadToken }, sha256: source.sha256,
++      });
++      if (!written) throw new Error("新版本图片存储冲突。");
++    }
++    return copies;
++  } catch (error) {
++    await discardUnreferencedKnowledgeAssetCopies(database, bucket, copies);
++    throw error;
++  }
++}
+ 
+ // R2 and D1 cannot commit together. Retain a successfully written object on a D1
+ // failure so the same upload can retry; never overwrite or delete another upload.
+--- a/aliyun/fs-r2.ts
++++ b/aliyun/fs-r2.ts
+@@ -78,6 +78,14 @@
+     }
+   }
+ 
++  async delete(keys: string | string[]): Promise<void> {
++    const files = (Array.isArray(keys) ? keys : [keys]).map(key => safeObjectPath(this.root, key));
++    for (const file of files) {
++      await rm(file, { force: true });
++      await rm(file + '.metadata.json', { force: true });
++    }
++  }
++
+   async get(key: string) {
+     const file = safeObjectPath(this.root, key);
+     try {
+--- a/aliyun/oss-r2.ts
++++ b/aliyun/oss-r2.ts
+@@ -87,6 +87,10 @@
+     }
+   }
+ 
++  async delete(keys: string | string[]): Promise<void> {
++    for (const key of Array.isArray(keys) ? keys : [keys]) await this.client.delete(key);
++  }
++
+   async get(key: string) {
+     try {
+       const result = await this.client.get(key);
+--- a/tests/knowledge-store.test.mjs
++++ b/tests/knowledge-store.test.mjs
+@@ -74,9 +74,11 @@
+     enforce: "pre",
+     resolveId(source) {
+       if (/^(?:\.\.\/)+db$/u.test(source)) return "\0knowledge-store-test-db";
++      if (source.endsWith("knowledge-assets-env")) return "\0knowledge-store-test-bucket";
+       return null;
+     },
+     load(id) {
++      if (id === "\0knowledge-store-test-bucket") return `export async function getKnowledgeAssetsBucket() { return globalThis.${stateKey}.bucket; }`;
+       if (id === "\0knowledge-store-test-db") return `
+         export async function getD1Database() {
+           return globalThis.${stateKey}.database;
+@@ -1491,23 +1493,43 @@
+ 
+ test('admin edits preserve immutable ready image bytes and block unuploaded references', async () => {
+   const sqlite = globalThis[stateKey].sqlite;
+-  sqlite.exec('CREATE TABLE knowledge_revision_assets (id TEXT PRIMARY KEY,item_id TEXT,revision_id TEXT,asset_path TEXT,mime_type TEXT,byte_size INTEGER,storage_key TEXT,sha256 TEXT,upload_token TEXT,upload_state TEXT,created_at TEXT,UNIQUE(revision_id,asset_path))');
++  for (const name of ['0031_knowledge_assets.sql', '0032_knowledge_asset_upload_state.sql', '0033_knowledge_asset_finalization.sql']) {
++    sqlite.exec(await readFile(new URL('../drizzle/' + name, import.meta.url), 'utf8'));
++  }
++  sqlite.exec(await readFile(new URL('./fixtures/aliyun-knowledge-image-staging.sql', import.meta.url), 'utf8'));
++  const assetModule = await vite.ssrLoadModule('/lib/knowledge-assets.ts');
++  const bytes = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64'));
++  const sha = await assetModule.knowledgeAssetSha256(bytes.buffer);
+   const original = submission({ content: '完整的实验室图片说明。\n![原图](assets/one.png)' }), admin = { ...actor('reviewer'), isAdmin: true };
+   const created = await store.createKnowledgeItem(actor('submitter'), original, await policy.hashKnowledgeSubmission(original));
+-  sqlite.prepare("INSERT INTO knowledge_revision_assets VALUES ('asset-old',?,?, 'assets/one.png','image/png',123,'immutable-original-key','sha-original','upload-original','ready','2026-09-01')").run(created.id, created.currentRevisionId);
++  const key = assetModule.knowledgeAssetStorageKey(created.id, created.currentRevisionId, 'assets/one.png');
++  const objects = new Map([[key, { bytes, customMetadata: { sha256: sha, uploadToken: 'upload-original' } }]]);
++  globalThis[stateKey].bucket = {
++    async get(key) { const o = objects.get(key); return o ? { ...o, size: o.bytes.byteLength, arrayBuffer: async () => o.bytes.slice().buffer } : null; },
++    async put(key, bytes, options) {
++      if (objects.has(key)) return null;
++      objects.set(key, { bytes: new Uint8Array(bytes).slice(), customMetadata: options.customMetadata });
++      return { key };
++    },
++    async delete(key) { objects.delete(key); },
++  };
++  sqlite.prepare("INSERT INTO knowledge_revision_assets VALUES ('asset-old',?,?, 'assets/one.png',?,'image/png',?,?,'2026-09-01','upload-original','ready')")
++    .run(created.id, created.currentRevisionId, key, bytes.byteLength, sha);
+   const before = await store.findKnowledgeItem(created.id, admin, true);
+   const next = { ...original, title: '修改后的图片题目', content: original.content.replace('原图', '修改后的图片说明') };
+   const saved = await store.adminUpdateKnowledgeItem(before, admin, next, await policy.hashKnowledgeSubmission(next));
+   assert.ok(saved);
+-  const assets = sqlite.prepare('SELECT * FROM knowledge_revision_assets WHERE item_id=? ORDER BY created_at').all(created.id);
+-  assert.equal(assets.length, 2);
+-  assert.ok(assets.every(asset => asset.storage_key === 'immutable-original-key' && asset.sha256 === 'sha-original' && asset.upload_state === 'ready'));
++  const images = sqlite.prepare('SELECT * FROM knowledge_revision_assets WHERE item_id=? ORDER BY created_at').all(created.id);
++  assert.equal(images.length, 2);
++  assert.equal(new Set(images.map(image => image.storage_key)).size, 2);
++  assert.ok(images.every(image => image.sha256 === sha && image.upload_state === 'ready'));
++  for (const image of images) assert.deepEqual(objects.get(image.storage_key).bytes, bytes);
+   const current = await store.findKnowledgeItem(created.id, admin, true);
+   const missing = { ...next, content: next.content.replace('one.png', 'missing.png') };
+   await assert.rejects(store.adminUpdateKnowledgeItem(current, admin, missing, await policy.hashKnowledgeSubmission(missing)), /未上传/);
+   assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM knowledge_revisions WHERE item_id=?').get(created.id).n, 2);
+-});
+-
++  assert.equal(objects.size, 2);
++});
+ 
+ test('admin save rolls back every revision and index change when audit insertion fails', async () => {
+   const original = submission(), admin = { ...actor('reviewer'), isAdmin: true };
+--- /dev/null
++++ b/tests/knowledge-admin-edit-images.test.mjs
+@@ -0,0 +1,189 @@
++import assert from 'node:assert/strict';
++import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { fileURLToPath } from 'node:url';
++import test, { after, beforeEach } from 'node:test';
++import { drizzle } from 'drizzle-orm/d1';
++import { createServer } from 'vite';
++
++const root = fileURLToPath(new URL('..', import.meta.url));
++const key = '__oaAdminImageEditRegression';
++globalThis[key] = {};
++const vite = await createServer({ appType: 'custom', configFile: false, root,
++  resolve: { alias: { '@': root } }, server: { middlewareMode: true, hmr: false },
++  plugins: [{ name: 'admin-image-edit-isolated-fixture', enforce: 'pre',
++    resolveId(source) {
++      if (/(^|\/)\_lib\/auth$/.test(source)) return '\0image-edit-auth';
++      if (/^(?:\.\.\/)+db$/.test(source)) return '\0image-edit-db';
++      if (source.endsWith('knowledge-assets-env')) return '\0image-edit-bucket';
++      return null;
++    },
++    load(id) {
++      if (id === '\0image-edit-db') return `export async function getD1Database(){return globalThis.${key}.database;} export async function getDb(){return globalThis.${key}.db;}`;
++      if (id === '\0image-edit-auth') return `export async function getAuthorizedUser(){return globalThis.${key}.authorized;}`;
++      if (id === '\0image-edit-bucket') return `export async function getKnowledgeAssetsBucket(){return globalThis.${key}.bucket;}`;
++      return null;
++    },
++  }],
++});
++const { NodeD1Database } = await vite.ssrLoadModule('/aliyun/d1-adapter.ts');
++const store = await vite.ssrLoadModule('/lib/knowledge-store.ts');
++const policy = await vite.ssrLoadModule('/lib/knowledge-policy.ts');
++const assets = await vite.ssrLoadModule('/lib/knowledge-assets.ts');
++const route = await vite.ssrLoadModule('/app/api/knowledge/[id]/edit/route.ts');
++let directory, database;
++after(async () => { database?.sqlite.close(); if (directory) rmSync(directory, { recursive: true, force: true }); delete globalThis[key]; await vite.close(); });
++class MemoryBucket {
++  objects = new Map();
++  onPut = null;
++  async put(key, body, options) {
++    if (this.objects.has(key)) return null;
++    const bytes = new Uint8Array(body).slice();
++    this.objects.set(key, { bytes, httpMetadata: options.httpMetadata, customMetadata: options.customMetadata });
++    this.onPut?.(key);
++    return { key, size: bytes.byteLength };
++  }
++  async get(key) {
++    const object = this.objects.get(key);
++    return object ? { ...object, size: object.bytes.byteLength, arrayBuffer: async () => object.bytes.slice().buffer } : null;
++  }
++  async delete(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) this.objects.delete(key); }
++}
++const actor = id => ({ memberId: id, accountUserId: 'email:'+id+'@example.com', memberMutationRevision: 'member-r1',
++  name: id, email: id+'@example.com', isAdmin: id === 'admin' });
++beforeEach(() => {
++  database?.sqlite.close(); if (directory) rmSync(directory, { recursive: true, force: true });
++  directory = mkdtempSync(join(tmpdir(), 'oa-admin-image-edit-'));
++  database = new NodeD1Database(join(directory, 'isolated.sqlite'));
++  const sqlite = database.sqlite;
++  const migrations = new URL('../drizzle/', import.meta.url);
++  for (const name of readdirSync(migrations).filter(name => /^\d{4}_.+\.sql$/.test(name)).sort()) {
++    for (const sql of readFileSync(new URL(name, migrations), 'utf8').split('--> statement-breakpoint').filter(part => part.trim())) sqlite.exec(sql);
++  }
++  sqlite.exec(readFileSync(new URL('./fixtures/aliyun-knowledge-admin-events.sql', import.meta.url), 'utf8'));
++  sqlite.exec(readFileSync(new URL('./fixtures/aliyun-knowledge-image-staging.sql', import.meta.url), 'utf8'));
++  for (const id of ['owner', 'admin']) sqlite.prepare(`INSERT INTO members
++    (id,full_name,chatgpt_account,account_user_id,status,role,permissions_json,mutation_revision,nda_accepted_at,nda_agreement_version)
++    VALUES(?,?,?,?, 'active',?,?,'member-r1','2026-09-01','TEST-NDA')`)
++    .run(id,id,id+'@example.com','email:'+id+'@example.com',id==='admin'?'project_owner':'member',id==='admin'?'["project_owner"]':'[]');
++  const admin = actor('admin');
++  globalThis[key] = { database, db: drizzle(database), bucket: new MemoryBucket(),
++    authorized: { ...admin, user: { email: admin.email, displayName: admin.name }, ndaCompleted: true } };
++});
++async function fixture(status = 'active', visibility = 'public', count = 13) {
++  const content = '# 仅隔离测试的图文资料\n\n' + Array.from({ length: count }, (_, i) => '!['+'原图 '+i+'](assets/image-'+i+'.png)').join('\n\n');
++  const original = { title: '隔离测试原题目', category: '科研交流', sourceLabel: '自动化测试', sourceUrl: '', summary: '本地合成资料', content };
++  const item = await store.createKnowledgeItem(actor('owner'), original, await policy.hashKnowledgeSubmission(original));
++  for (let i = 0; i < count; i++) await assets.persistKnowledgeAsset(database, globalThis[key].bucket, item.id, item.currentRevisionId,
++    { path: 'assets/image-'+i+'.png', mimeType: 'image/png', bytes: new TextEncoder().encode('isolated fixture bytes '+i).buffer });
++  if (status === 'active') await store.reviewKnowledgeItem(await store.findKnowledgeItem(item.id, actor('admin'), true),
++    actor('admin'), 'approve', '仅测试审核', visibility, visibility === 'public' ? policy.PUBLIC_KNOWLEDGE_CONFIRMATION : undefined);
++  return { original, before: await store.findKnowledgeItem(item.id, actor('admin'), true) };
++}
++async function edit(before, original, title = '隔离测试修改题目') {
++  const response = await route.PATCH(new Request('https://oa.omindos.cn/api/knowledge/'+before.id+'/edit',
++    { method:'PATCH', headers:{ origin:'https://oa.omindos.cn','content-type':'application/json' },
++      body:JSON.stringify({ title, body:original.content.replace('原图 0','修改后的图片说明'), mutationRevision:before.mutation_revision }) }),
++    { params:Promise.resolve({ id:before.id }) });
++  return { status:response.status, data:await response.json() };
++}
++test('approved public material with 13 images saves through the real API and SQLite constraints', async () => {
++  const { original, before } = await fixture();
++  const bucket = globalThis[key].bucket, previousKeys = [...bucket.objects.keys()];
++  const result = await edit(before, original);
++  assert.equal(result.status,200,JSON.stringify(result.data));
++  assert.equal(result.data.received,true);
++  const current = await store.findKnowledgeItem(before.id,actor('admin'),true);
++  assert.equal(current.status,'active'); assert.equal(current.visibility,'public');
++  assert.equal(current.current_revision_id,current.active_revision_id);
++  assert.notEqual(current.current_revision_id,before.current_revision_id);
++  assert.match(current.content,/修改后的图片说明/);
++  const copies = await assets.listKnowledgeRevisionAssets(database,current.current_revision_id);
++  assert.equal(copies.length,13);
++  assert.ok(copies.every(image=>!previousKeys.includes(image.storageKey)));
++  assert.equal(bucket.objects.size,26);
++  for (const key of previousKeys) assert.ok(bucket.objects.has(key));
++  for (const image of copies) {
++    const source = database.sqlite.prepare('SELECT storage_key,sha256 FROM knowledge_revision_assets WHERE revision_id=? AND asset_path=?').get(before.current_revision_id,image.assetPath);
++    assert.deepEqual(bucket.objects.get(image.storageKey).bytes,bucket.objects.get(source.storage_key).bytes);
++    assert.equal(await assets.knowledgeAssetSha256(bucket.objects.get(image.storageKey).bytes.buffer),source.sha256);
++  }
++  const detail = await store.getKnowledgeItemDetail(before.id,actor('admin'),true);
++  assert.equal(detail.revisions.length,2); assert.equal(detail.events.at(-1).action,'admin_edited');
++  assert.equal(detail.revisions[1].content,original.content);
++  const chunks = database.sqlite.prepare('SELECT revision_id FROM knowledge_chunks WHERE item_id=? AND is_active=1').all(before.id);
++  assert.ok(chunks.length); assert.ok(chunks.every(row=>row.revision_id===current.current_revision_id));
++});
++test('pending images retain pending status and unique immutable object keys after editing', async () => {
++  const { original,before }=await fixture('pending','internal',1);
++  const result=await edit(before,original);assert.equal(result.status,200,JSON.stringify(result.data));
++  const current=await store.findKnowledgeItem(before.id,actor('admin'),true);
++  assert.equal(current.status,'pending');assert.equal(current.active_revision_id,null);
++  assert.equal((await assets.listKnowledgeRevisionAssets(database,current.current_revision_id)).length,1);
++  assert.equal(database.sqlite.prepare('SELECT COUNT(*) n FROM knowledge_chunks WHERE is_active=1').get().n,0);
++});
++test('revoking the member snapshot during image copying rolls back and removes only new objects', async () => {
++  const { original,before }=await fixture('active','internal',2);
++  const bucket=globalThis[key].bucket, keys=[...bucket.objects.keys()];
++  bucket.onPut=()=>{bucket.onPut=null;database.sqlite.prepare("UPDATE members SET mutation_revision='revoked' WHERE id='admin'").run();};
++  const result=await edit(before,original);assert.equal(result.status,409,JSON.stringify(result.data));
++  assert.deepEqual([...bucket.objects.keys()].sort(),keys.sort());
++  const row=database.sqlite.prepare('SELECT current_revision_id,active_revision_id FROM knowledge_items WHERE id=?').get(before.id);
++  assert.equal(row.current_revision_id,before.current_revision_id);assert.equal(row.active_revision_id,before.active_revision_id);
++  assert.equal(database.sqlite.prepare('SELECT COUNT(*) n FROM knowledge_revisions WHERE item_id=?').get(before.id).n,1);
++});
++test('audit failures roll back text and image metadata without leaking copied objects', async () => {
++  const { original,before }=await fixture('active','internal',2);
++  const bucket=globalThis[key].bucket, keys=[...bucket.objects.keys()];
++  database.sqlite.exec("CREATE TRIGGER fail_admin_image_audit BEFORE INSERT ON knowledge_events WHEN NEW.action='admin_edited' BEGIN SELECT RAISE(ABORT,'test audit unavailable'); END");
++  const result=await edit(before,original);assert.equal(result.status,500);
++  assert.deepEqual([...bucket.objects.keys()].sort(),keys.sort());
++  const current=await store.findKnowledgeItem(before.id,actor('admin'),true);
++  assert.equal(current.current_revision_id,before.current_revision_id);assert.equal(current.content,original.content);
++});
++
++test('production filesystem bucket preserves images and removes only uncommitted edit copies', async () => {
++  const { FileSystemR2Bucket } = await vite.ssrLoadModule('/aliyun/fs-r2.ts');
++  const bucket = new FileSystemR2Bucket(join(directory, 'assets'));
++  globalThis[key].bucket = bucket;
++  const { original, before } = await fixture('active', 'internal', 2);
++  const saved = await edit(before, original);
++  assert.equal(saved.status, 200, JSON.stringify(saved.data));
++  const current = await store.findKnowledgeItem(before.id, actor('admin'), true);
++  const previousAssets = await assets.listKnowledgeRevisionAssets(database, before.current_revision_id);
++  const currentAssets = await assets.listKnowledgeRevisionAssets(database, current.current_revision_id);
++  assert.equal(currentAssets.length, 2);
++  for (const image of currentAssets) {
++    const source = previousAssets.find(old => old.assetPath === image.assetPath);
++    assert.notEqual(image.storageKey, source.storageKey);
++    assert.deepEqual(new Uint8Array(await (await bucket.get(image.storageKey)).arrayBuffer()),
++      new Uint8Array(await (await bucket.get(source.storageKey)).arrayBuffer()));
++  }
++  const attempted = [];
++  const put = bucket.put.bind(bucket);
++  bucket.put = async (key, ...args) => { attempted.push(key); return put(key, ...args); };
++  database.sqlite.exec("CREATE TRIGGER fail_fs_image_audit BEFORE INSERT ON knowledge_events WHEN NEW.action='admin_edited' BEGIN SELECT RAISE(ABORT,'test audit unavailable'); END");
++  const failed = await edit(current, { ...original, content: current.content }, '再次修改的隔离测试题目');
++  assert.equal(failed.status, 500);
++  assert.equal(attempted.length, 2);
++  for (const key of attempted) assert.equal(await bucket.get(key), null);
++  for (const image of [...previousAssets, ...currentAssets]) assert.ok(await bucket.get(image.storageKey));
++  assert.equal((await store.findKnowledgeItem(before.id, actor('admin'), true)).current_revision_id, current.current_revision_id);
++});
++test('an interrupted image copy leaves the approved revision and original objects intact', async () => {
++  const { original, before } = await fixture('active', 'internal', 3);
++  const bucket = globalThis[key].bucket, keys = [...bucket.objects.keys()], put = bucket.put.bind(bucket);
++  let copied = 0;
++  bucket.put = async (...args) => {
++    const written = await put(...args);
++    if (++copied === 2) throw new Error('test lost storage acknowledgement');
++    return written;
++  };
++  const result = await edit(before, original);
++  assert.equal(result.status, 500);
++  assert.deepEqual([...bucket.objects.keys()].sort(), keys.sort());
++  const current = await store.findKnowledgeItem(before.id, actor('admin'), true);
++  assert.equal(current.current_revision_id, before.current_revision_id);
++  assert.equal(current.content, original.content);
++});
+--- /dev/null
++++ b/tests/fixtures/aliyun-knowledge-image-staging.sql
+@@ -0,0 +1,21 @@
++-- Existing Aliyun schema: permit a pending replacement while the approved version stays active.
++DROP TRIGGER knowledge_revision_assets_pending_insert;
++CREATE TRIGGER `knowledge_revision_assets_pending_insert`
++BEFORE INSERT ON `knowledge_revision_assets`
++BEGIN
++	SELECT CASE WHEN EXISTS (SELECT 1 FROM migration_control WHERE deactivated_at IS NULL)
++		THEN RAISE(ABORT, 'migration write freeze active') END;
++	SELECT CASE WHEN NOT EXISTS (
++		SELECT 1 FROM knowledge_items i JOIN knowledge_revisions r
++		ON r.id = i.current_revision_id AND r.item_id = i.id
++		WHERE i.id = NEW.item_id AND r.id = NEW.revision_id
++		AND r.status = 'pending'
++		AND (i.status = 'pending' OR (i.status = 'active' AND i.active_revision_id <> i.current_revision_id))
++	) THEN RAISE(ABORT, 'knowledge revision is not pending') END;
++	SELECT CASE WHEN NEW.upload_state = 'staged' AND (
++		length(NEW.upload_token) = 0 OR EXISTS (
++			SELECT 1 FROM knowledge_revision_assets
++			WHERE revision_id = NEW.revision_id AND upload_state = 'ready'
++		)
++	) THEN RAISE(ABORT, 'knowledge upload is already finalized or has no token') END;
++END;

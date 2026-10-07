@@ -1,5 +1,9 @@
+import { getReviewPolicy, fixedTechnicalPayload, technicalReviewState, advanceTechnicalReview, technicalRoute, policyActor, assertPurchaseSettled, technicalPendingForEmail } from '../../../../lib/review-routing.mjs';
+import { LedgerError } from '../../../../lib/expense-ledger.mjs';
+import { administratorReviewAllowed, administratorReviews, hasAdministratorReview } from "../../../../lib/administrator-approval";
+import { returnedApprovalDeletionError } from "../../../../lib/returned-approval-deletion";
 import { and, asc, eq, exists, isNull, sql } from "drizzle-orm";
-import { getDb } from "../../../../db";
+import { getDb, getD1Database } from "../../../../db";
 import { approvalEvents, approvalRevisions, approvals, externalArchives, laborSourceClaims, members } from "../../../../db/schema";
 import {
   asNumber,
@@ -44,6 +48,7 @@ import {
 } from "../../../../lib/nda-agreement";
 import { conditionalApprovalRevisionInsert, planApprovalRevisions } from "../../../../lib/approval-revision-store";
 import { FEISHU_PDF_ARCHIVE_DESTINATION } from "../../../../lib/feishu-drive-archive";
+import { approvalPdfArchiveStatus } from "../../../../lib/pdf-archive-status";
 import { serializeApproval } from "../route";
 
 const REVIEW_EVENT_ACTIONS = new Set(["approve", "return", "confirm_developer", "confirm_purchase", "confirm_circulation"]);
@@ -270,7 +275,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       ? approval.type === "保密协议" && normalizeEmail(approval.requesterEmail) === email
       : authorized.isAdmin || authorized.role === "project_owner"
         ? true
-        : (authorized.isFinanceOwner && approval.type === "劳务报酬") || isApprovalRelated(approval, email, historicalActors);
+        : (authorized.isFinanceOwner && ["劳务报酬", "采购审核"].includes(approval.type)) || isApprovalRelated(approval, email, historicalActors);
     if (!canView) return Response.json({ error: "申请不存在或当前账号无权查看。" }, { status: 404 });
     const agreementKind = approval.type === "保密协议"
       ? confidentialityAgreementKindFromPayload(parseJsonObject(approval.payloadJson))
@@ -302,9 +307,18 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       eq(externalArchives.destination, FEISHU_PDF_ARCHIVE_DESTINATION),
       eq(externalArchives.manifestHash, manifest.hash),
     )).limit(1) : [];
+    let archiveSyncEnabled: string | undefined;
+    if (manifest && pdfArchive?.status !== "uploaded") {
+      try {
+        const { env } = await import("cloudflare:workers");
+        archiveSyncEnabled = (env as typeof env & { FEISHU_PDF_ARCHIVE_ENABLED?: string }).FEISHU_PDF_ARCHIVE_ENABLED;
+      } catch {
+        // Optional external storage configuration must not block OA details or PDF downloads.
+      }
+    }
     return Response.json({
       approval: manifest
-        ? { ...serialized, archiveHash: manifest.hash, archiveContentHash: manifest.fileHash, evidenceRecordHash: manifest.evidenceRecordHash, archiveSchemaVersion: manifest.schemaVersion, terminalRevisionNo: manifest.terminalRevisionNo, terminalRevisionHash: manifest.terminalRevisionHash, terminalStateHash: manifest.terminalStateHash, feishuPdfArchive: pdfArchive || { status: "pending" } }
+        ? { ...serialized, archiveHash: manifest.hash, archiveContentHash: manifest.fileHash, evidenceRecordHash: manifest.evidenceRecordHash, archiveSchemaVersion: manifest.schemaVersion, terminalRevisionNo: manifest.terminalRevisionNo, terminalRevisionHash: manifest.terminalRevisionHash, terminalStateHash: manifest.terminalStateHash, feishuPdfArchive: approvalPdfArchiveStatus(pdfArchive, archiveSyncEnabled) }
         : archiveIntegrityError ? { ...serialized, archiveIntegrityError } : serialized,
       events: events.map((event) => ({ id: event.id, actorName: event.actorName, actorEmail: event.actorEmail, action: eventActionLabel(event.action), note: publicEventNote(event.action, event.note), createdAt: event.createdAt })),
     }, { headers: PRIVATE_JSON_HEADERS });
@@ -322,10 +336,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const parsedBody = await readBoundedJsonObject(request, 65_536);
   if (!parsedBody.ok) return Response.json({ error: parsedBody.reason === "too_large" ? "审核动作数据过大。" : "审核动作格式不正确。" }, { status: parsedBody.reason === "too_large" ? 413 : 400 });
   const body = parsedBody.value;
-  const actionValue = textValue(body.action);
+  const deletesReturned = body.action === "delete_returned";
+  const actionValue = deletesReturned ? "void" : textValue(body.action);
   if (!isApprovalAction(actionValue)) return Response.json({ error: "不支持的审核动作。" }, { status: 400 });
   const action: ApprovalAction = actionValue;
-  const note = textValue(body.note);
+  const note = deletesReturned ? "申请人删除退回文件" : textValue(body.note);
   if (note.length > 1000) return Response.json({ error: "审核意见不能超过 1000 字。" }, { status: 400 });
 
   try {
@@ -335,6 +350,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!approval) return Response.json({ error: "申请不存在。" }, { status: 404 });
     const requesterEmail = normalizeEmail(approval.requesterEmail);
     const currentEmail = normalizeEmail(user.email);
+    if (deletesReturned) {
+      const origin = request.headers.get("origin");
+      if ((origin && origin !== new URL(request.url).origin) || request.headers.get("sec-fetch-site") === "cross-site") return Response.json({ error: "请在 OA 内删除退回文件。" }, { status: 403 });
+      const failure = returnedApprovalDeletionError(approval, currentEmail, body.expectedUpdatedAt);
+      if (failure) return Response.json({ error: failure.error }, { status: failure.status });
+    }
     if (!(await consumeWriteRateLimit(db, { actorSubject: authorized.accountUserId || "", scope: "approval_write", limit: MAX_WORKFLOW_WRITES_PER_MINUTE }))) {
       return Response.json({ error: "审核操作过于频繁，请稍后再试。" }, { status: 429, headers: { "retry-after": "60" } });
     }
@@ -342,23 +363,35 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return Response.json({ error: "该申请的不可变材料版本已达安全上限，请联系管理员核验并制定迁移处理方案。" }, { status: 409 });
     }
     let payload = parseJsonObject(approval.payloadJson);
+    const reviewPolicy = ["技术审核","采购审核","流转审批"].includes(approval.type) ? await getReviewPolicy(await getD1Database()) : null;
+    if (reviewPolicy && ["技术审核","采购审核"].includes(approval.type) && ["approve","confirm_developer"].includes(action) && (approval.type === "技术审核" || ["技术顾问","项目负责人"].includes(approval.currentStep))) {
+      const state=technicalReviewState(payload,reviewPolicy);
+      if (action === "approve" && !state.pendingPeople.some(person=>policyActor(person,authorized))) return Response.json({error:"须先由任一指定技术审核人审核，再交负责人。"},{status:403});
+    }
+    if (reviewPolicy && approval.type === "采购审核" && ["财务审核","负责人终审","报销待完成"].includes(approval.currentStep) && !["withdraw","force_return"].includes(action)) {
+      const expected=approval.currentStep === "负责人终审" ? reviewPolicy.owner : reviewPolicy.finance;
+      if(!policyActor(expected,authorized)) return Response.json({error:"仅本节点指定审核人本人可以处理。"},{status:403});
+    }
+    const managedReview = Boolean(reviewPolicy && (["技术审核", "采购审核"].includes(approval.type) || payload.technicalWeekly === true));
+    const administratorReview = !managedReview && administratorReviewAllowed(approval.type, approval.currentStep, approval.status, authorized.isAdmin) && (action === "approve" || action === "return");
     const isApplicantAction = action === "resubmit" || action === "withdraw" || action === "void" || action === "archive_note";
     if (isApplicantAction) {
       if (requesterEmail !== currentEmail) return Response.json({ error: "申请不存在或当前账号不可操作。" }, { status: 404 });
     } else if (action === "force_return") {
       if (!authorized.isAdmin) return Response.json({ error: "只有管理员可以执行异常流程强制退回。" }, { status: 403 });
-    } else {
+    } else if (!administratorReview) {
       const isAssignedCirculationActor = approval.type === "流转审批" && pendingCirculationPeople(payload, approval.currentStep).some((person) => person.email === currentEmail && person.memberId === authorized.memberId && person.accountUserId === authorized.accountUserId);
-      if (approval.type === "流转审批" ? !isAssignedCirculationActor : normalizeEmail(approval.currentReviewerEmail) !== currentEmail) return Response.json({ error: "申请不存在或当前账号不可操作。" }, { status: 404 });
+      const isAssignedTechnicalActor = ["技术审核","采购审核"].includes(approval.type) && approval.currentStep === "技术顾问" && reviewPolicy && technicalReviewState(payload,reviewPolicy).pendingPeople.some(person=>policyActor(person,authorized));
+      if (approval.type === "流转审批" ? !isAssignedCirculationActor : ["技术审核","采购审核"].includes(approval.type) && approval.currentStep === "技术顾问" && reviewPolicy ? !isAssignedTechnicalActor : normalizeEmail(approval.currentReviewerEmail) !== currentEmail) return Response.json({ error: "申请不存在或当前账号不可操作。" }, { status: 404 });
       if (!stepRoleAllowed(approval.currentStep, authorized)) return Response.json({ error: "当前账号没有该审核节点的处理权限。" }, { status: 403 });
     }
     if (!isApprovalType(approval.type)) return Response.json({ error: "申请类型异常，无法继续流转。" }, { status: 409 });
     const ownNdaApplicantAction = approval.type === "保密协议" && requesterEmail === currentEmail && isApplicantAction;
     if (!hasCompletedNda(authorized) && !ownNdaApplicantAction) return Response.json({ error: "保密协议归档前只能提交、撤回、作废或补充本人的保密文件，不能处理其他申请。" }, { status: 403 });
-    if (!workflowAllows(approval.type, approval.currentStep, action, approval.status)) return Response.json({ error: `“${approval.type} / ${approval.currentStep}”节点不允许执行“${eventActionLabel(action)}”动作。` }, { status: 409 });
+    if (!deletesReturned && !workflowAllows(approval.type, approval.currentStep, action, approval.status)) return Response.json({ error: `“${approval.type} / ${approval.currentStep}”节点不允许执行“${eventActionLabel(action)}”动作。` }, { status: 409 });
     if (action === "force_return" && note.length < 10) return Response.json({ error: "管理员强制退回必须填写至少 10 个字的异常原因。" }, { status: 400 });
     if ((action === "withdraw" || action === "void") && note.length < 2) return Response.json({ error: action === "withdraw" ? "请填写至少 2 个字的撤回原因。" : "请填写至少 2 个字的作废原因。" }, { status: 400 });
-    if (action === "approve" && requesterEmail === currentEmail) return Response.json({ error: "申请人不能审核自己的申请，请退回并改由其他实名审核人处理。" }, { status: 403 });
+    if (action === "approve" && !administratorReview && requesterEmail === currentEmail) return Response.json({ error: "申请人不能审核自己的申请，请退回并改由其他实名审核人处理。" }, { status: 403 });
 
     const currentMemberNdaRequiresFreshSignature = approval.type === "保密协议"
       && confidentialityAgreementKindFromPayload(payload) === "member"
@@ -389,10 +422,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       const now = new Date().toISOString();
       const workflowMutationRevision = crypto.randomUUID();
       const isVoid = action === "void";
-      const eventNote = isVoid ? `申请人作废：${note}` : `申请人撤回：${note}`;
+      const eventNote = deletesReturned ? "申请人删除已退回文件，保留历史记录" : isVoid ? `申请人作废：${note}` : `申请人撤回：${note}`;
       payload = {
         ...payload,
         workflowMutationRevision,
+        ...(deletesReturned ? { applicantDeletedAt: now, applicantDeletedBy: currentEmail } : {}),
         ...(isVoid
           ? { voidedAt: now, voidedBy: { email: currentEmail, name: user.displayName }, voidReason: note }
           : { withdrawnAt: now, withdrawnBy: { email: currentEmail, name: user.displayName }, withdrawReason: note }),
@@ -476,6 +510,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         const error = validateStoredCirculation(payload, await activeMembers(db), requesterEmail);
         if (error) return Response.json({ error }, { status: 409 });
         payload = { ...payload, circulationConfirmations: [], circulationApprovals: [] };
+        if(payload.technicalWeekly === true && reviewPolicy) payload = {...payload,circulationApprovers:technicalRoute(reviewPolicy).filter(p=>p.memberId===reviewPolicy.owner.memberId||p.email!==requesterEmail),circulationOrdered:true,circulationAnyTechnical:true};
         const person = [...circulationPeople(payload.circulationRecipients), ...circulationPeople(payload.circulationApprovers)][0];
         nextReviewer = { email: person.email, displayName: person.name };
       } else if (approval.type === "技术审核") {
@@ -483,7 +518,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         const normalized = await normalizeStoredDevelopers(db, payload);
         if (!normalized.developers) return Response.json({ error: normalized.error || "技术开发人信息已失效，请重新编辑申请。" }, { status: 409 });
         const firstDeveloper = normalized.developers[0];
-        payload = { ...payload, developers: normalized.developers, developerConfirmations: [] };
+        payload = fixedTechnicalPayload({ ...payload, developers: normalized.developers, developerConfirmations: [] },reviewPolicy,requesterEmail);
         nextReviewer = { email: firstDeveloper.email, displayName: firstDeveloper.name };
       } else {
         const initialReviewerEmail = normalizeEmail(payload.initialReviewerEmail);
@@ -522,8 +557,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if (approval.type === "采购审核") {
         for (const key of ["purchaserEmail", "purchaserMemberId", "purchaserName", "purchaserAssignedAt", "purchaserAssignedBy", "purchaseNote", "actualAmount", "purchaseConfirmedAt", "purchaseCompletion"]) delete payload[key];
       }
+      if(approval.type === "采购审核") { payload=fixedTechnicalPayload(payload,reviewPolicy,requesterEmail); nextReviewer={email:textValue(payload.initialReviewerEmail),displayName:textValue(payload.initialReviewerName)}; delete payload.expenseApprovalRoute; delete payload.expenseApprovals; delete payload.reimbursementEvidence; }
       delete payload.archivedAt;
       delete payload.archivedBy;
+      delete payload.administratorReviews;
       if (approval.currentRevisionNo + 1 + workflowRevisionsNeededAfterMaterial(approval.type, payload) > MAX_APPROVAL_REVISIONS) {
         return Response.json({ error: "该申请剩余的不可变版本空间不足以完成重新提交后的全部实名节点；请联系管理员核验并制定迁移处理方案。" }, { status: 409 });
       }
@@ -604,6 +641,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     let nextReviewer: { email: string; displayName: string } | null = null;
     let signersJson = approval.signersJson;
     let nextAmount = approval.amount;
+    let financialLedgerRevision: number | null = null;
     const now = new Date().toISOString();
     const initialReviewerEmail = normalizeEmail(payload.initialReviewerEmail);
 
@@ -611,21 +649,26 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       const error = validateStoredCirculation(payload, await activeMembers(db), requesterEmail);
       if (error) return Response.json({ error }, { status: 409 });
       if (action === "approve" && pendingCirculationPeople(payload, "流转确认").length) return Response.json({ error: "仍有流转对象未确认，暂不能审批。" }, { status: 409 });
-      const key = action === "confirm_circulation" ? "circulationConfirmations" : "circulationApprovals";
-      const decisions = Array.isArray(payload[key]) ? payload[key] as unknown[] : [];
-      payload = { ...payload, [key]: [...decisions, { memberId: authorized.memberId, accountUserId: authorized.accountUserId, email: currentEmail, name: user.displayName, confirmedAt: now, note }] };
-      signersJson = addApprovalSigner(signersJson, { name: user.displayName, email: currentEmail, accountUserId: authorized.accountUserId, memberId: authorized.memberId, signedAt: now });
-      const remaining = pendingCirculationPeople(payload, approval.currentStep);
-      if (remaining.length) nextStep = approval.currentStep;
-      else if (action === "confirm_circulation") nextStep = circulationPeople(payload.circulationApprovers).length ? "指定审批" : "已归档";
-      else nextStep = "已归档";
-      const nextPeople = pendingCirculationPeople(payload, nextStep);
-      if (nextPeople.length) nextReviewer = { email: nextPeople[0].email, displayName: nextPeople.map((person) => person.name).join("、") };
+      if (administratorReview && action === "approve") {
+        nextStep = "已归档";
+        signersJson = addApprovalSigner(signersJson, { name: user.displayName, email: currentEmail, accountUserId: authorized.accountUserId, memberId: authorized.memberId, signedAt: now });
+      } else {
+        const key = action === "confirm_circulation" ? "circulationConfirmations" : "circulationApprovals";
+        const decisions = Array.isArray(payload[key]) ? payload[key] as unknown[] : [];
+        payload = { ...payload, [key]: [...decisions, { memberId: authorized.memberId, accountUserId: authorized.accountUserId, email: currentEmail, name: user.displayName, confirmedAt: now, note }] };
+        signersJson = addApprovalSigner(signersJson, { name: user.displayName, email: currentEmail, accountUserId: authorized.accountUserId, memberId: authorized.memberId, signedAt: now });
+        const remaining = pendingCirculationPeople(payload, approval.currentStep);
+        if (remaining.length) nextStep = approval.currentStep;
+        else if (action === "confirm_circulation") nextStep = circulationPeople(payload.circulationApprovers).length ? "指定审批" : "已归档";
+        else nextStep = "已归档";
+        const nextPeople = pendingCirculationPeople(payload, nextStep);
+        if (nextPeople.length) nextReviewer = { email: nextPeople[0].email, displayName: nextPeople.map((person) => person.name).join("、") };
+      }
     }
 
     // Re-check duty separation at every decisive transition so records created
     // before this policy cannot be completed through a legacy role collision.
-    if (action === "approve" && approval.currentStep === "项目负责人") {
+    if (action === "approve" && !administratorReview && approval.currentStep === "项目负责人") {
       if (!hasDistinctVerifiedEmails(requesterEmail, currentEmail)) return Response.json({ error: "申请人与项目负责人必须由不同实名账号担任。" }, { status: 409 });
       if ((approval.type === "技术审核" || approval.type === "采购审核") && !hasDistinctVerifiedEmails(requesterEmail, initialReviewerEmail, currentEmail)) {
         return Response.json({ error: "申请人、技术顾问与项目负责人必须由不同实名账号担任；请退回后重新指定。" }, { status: 409 });
@@ -634,7 +677,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         return Response.json({ error: "技术开发人不能同时担任本事项的项目负责人审核人；请退回后重新指定。" }, { status: 409 });
       }
     }
-    if (action === "approve" && approval.type === "劳务报酬" && approval.currentStep === "经费负责人" && !hasDistinctVerifiedEmails(requesterEmail, initialReviewerEmail, currentEmail)) {
+    if (action === "approve" && !administratorReview && approval.type === "劳务报酬" && approval.currentStep === "经费负责人" && !hasDistinctVerifiedEmails(requesterEmail, initialReviewerEmail, currentEmail)) {
       const recommendationIdentity = payload.suggestedAmountBy as { email?: unknown; accountUserId?: unknown } | undefined;
       const configuredDualReview = initialReviewerEmail === currentEmail
         && requesterEmail !== currentEmail
@@ -664,25 +707,32 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         if (advisor.email === requesterEmail) return Response.json({ error: "申请人不能担任本人申请的技术顾问，请联系管理员退回后重新选择。" }, { status: 409 });
         if (normalized.developers.some((developer) => developer.email === advisor.email)) return Response.json({ error: "技术开发人不能同时担任本事项的技术顾问，请联系管理员退回后重新选择。" }, { status: 409 });
         nextStep = "技术顾问";
-        nextReviewer = { email: advisor.email, displayName: advisor.displayName };
+        nextReviewer = { email: advisor.email, displayName: approval.type === "技术审核" && reviewPolicy ? textValue(payload.initialReviewerName) : advisor.displayName };
       }
     }
 
-    if (action === "approve" && approval.currentStep === "技术顾问") {
+    if (action === "approve" && approval.currentStep === "技术顾问" && !(["技术审核","采购审核"].includes(approval.type) && reviewPolicy)) {
       const nextReviewerEmail = normalizeEmail(body.nextReviewerEmail);
       if (!nextReviewerEmail) return Response.json({ error: "请选择下一位项目负责人，或选择退回。" }, { status: 400 });
-      const candidate = (await getReviewerDirectory({ ...user, accountUserId: authorized.accountUserId })).find((item) => item.email === nextReviewerEmail && item.ndaCompleted && item.permissions.includes("project_owner"));
+      const candidate = (await getReviewerDirectory({ ...user, accountUserId: authorized.accountUserId })).find((item) => item.email === nextReviewerEmail && item.ndaCompleted && (item.isAdmin || item.permissions.includes("project_owner")));
       if (!candidate) return Response.json({ error: "下一位审核人必须是已授权的项目负责人。" }, { status: 400 });
-      if (!hasDistinctVerifiedEmails(requesterEmail, currentEmail, candidate.email)) return Response.json({ error: "申请人、技术顾问与项目负责人必须由三个不同的实名账号担任。" }, { status: 400 });
-      if (approval.type === "技术审核" && Array.isArray(payload.developers) && payload.developers.some((item) => normalizeEmail((item as TechnicalDeveloper).email) === candidate.email)) return Response.json({ error: "技术开发人不能同时担任本事项的项目负责人审核人。" }, { status: 400 });
+      if (!administratorReview && !hasDistinctVerifiedEmails(requesterEmail, currentEmail, candidate.email)) return Response.json({ error: "申请人、技术顾问与项目负责人必须由三个不同的实名账号担任。" }, { status: 400 });
+      if (!(administratorReview && candidate.isAdmin) && approval.type === "技术审核" && Array.isArray(payload.developers) && payload.developers.some((item) => normalizeEmail((item as TechnicalDeveloper).email) === candidate.email)) return Response.json({ error: "技术开发人不能同时担任本事项的项目负责人审核人。" }, { status: 400 });
       nextReviewer = { email: candidate.email, displayName: candidate.displayName };
       signersJson = addApprovalSigner(signersJson, { name: user.displayName, email: currentEmail, accountUserId: authorized.accountUserId, memberId: authorized.memberId, signedAt: now });
+    }
+
+    if (["技术审核","采购审核"].includes(approval.type) && reviewPolicy && action === "approve" && ["技术顾问","项目负责人"].includes(approval.currentStep)) {
+      const result=advanceTechnicalReview(payload,reviewPolicy,authorized,now,note);
+      payload=result.payload;if(!(approval.type === "采购审核" && approval.currentStep === "项目负责人"))nextStep=result.step;
+      nextReviewer=result.next?{email:result.next.email,displayName:result.next.name}:null;
+      signersJson=addApprovalSigner(signersJson,{name:user.displayName,email:currentEmail,accountUserId:authorized.accountUserId,memberId:authorized.memberId,signedAt:now});
     }
 
     if (action === "approve" && approval.type === "采购审核" && approval.currentStep === "项目负责人") {
       const purchaserEmail = normalizeEmail(body.purchaserEmail);
       if (!purchaserEmail) return Response.json({ error: "请由项目负责人指定统一采购成员。" }, { status: 400 });
-      if (!hasDistinctVerifiedEmails(requesterEmail, initialReviewerEmail, currentEmail, purchaserEmail)) return Response.json({ error: "申请人、技术顾问、项目负责人和统一采购成员必须由不同实名账号担任。" }, { status: 400 });
+      if (administratorReview ? !purchaserEmail || [requesterEmail, initialReviewerEmail, currentEmail].includes(purchaserEmail) : !hasDistinctVerifiedEmails(requesterEmail, initialReviewerEmail, currentEmail, purchaserEmail)) return Response.json({ error: "申请人、技术顾问、项目负责人和统一采购成员必须由不同实名账号担任。" }, { status: 400 });
       const [purchaser] = await db.select({ id: members.id, fullName: members.fullName, chatgptAccount: members.chatgptAccount, accountUserId: members.accountUserId, role: members.role, permissionsJson: members.permissionsJson, ndaAcceptedAt: members.ndaAcceptedAt, ndaAgreementVersion: members.ndaAgreementVersion }).from(members).where(and(eq(members.chatgptAccount, purchaserEmail), eq(members.status, "active"))).limit(1);
       if (!purchaser || !isNdaAdmittedMember(purchaser)) return Response.json({ error: "指定采购成员必须是已完成保密协议归档的当前有效成员。" }, { status: 400 });
       payload = { ...payload, purchaserEmail: normalizeEmail(purchaser.chatgptAccount), purchaserMemberId: purchaser.id, purchaserName: purchaser.fullName, purchaserAssignedAt: now, purchaserAssignedBy: { email: currentEmail, name: user.displayName } };
@@ -695,7 +745,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if (purchaserEmail !== currentEmail) return Response.json({ error: "只有申请中指定的采购成员本人可以确认采购完成。" }, { status: 403 });
       const purchaserAssignment = payload.purchaserAssignedBy && typeof payload.purchaserAssignedBy === "object" && !Array.isArray(payload.purchaserAssignedBy) ? payload.purchaserAssignedBy as Record<string, unknown> : {};
       const projectOwnerEmail = normalizeEmail(purchaserAssignment.email);
-      if (!hasDistinctVerifiedEmails(requesterEmail, initialReviewerEmail, projectOwnerEmail, currentEmail) || textValue(payload.purchaserMemberId) !== authorized.memberId) {
+      const purchaserSeparated = hasAdministratorReview(payload, "项目负责人", projectOwnerEmail)
+        ? [requesterEmail, initialReviewerEmail, projectOwnerEmail].every((email) => Boolean(email) && email !== currentEmail)
+        : hasDistinctVerifiedEmails(requesterEmail, initialReviewerEmail, projectOwnerEmail, currentEmail);
+      if (!purchaserSeparated || textValue(payload.purchaserMemberId) !== authorized.memberId) {
         return Response.json({ error: "采购职责分离或实名成员绑定记录不完整，不能直接归档；请退回后重新指定。" }, { status: 409 });
       }
       const purchaseNote = textValue(body.purchaseNote ?? body.note);
@@ -719,6 +772,34 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       signersJson = addApprovalSigner(signersJson, { name: user.displayName, email: currentEmail, accountUserId: authorized.accountUserId, memberId: authorized.memberId, signedAt: now });
     }
 
+    if (reviewPolicy && approval.type === "采购审核") {
+      if(action === "confirm_purchase") {
+        payload={...payload,expenseApprovalRoute:[reviewPolicy.finance,reviewPolicy.owner],expenseApprovals:[]};
+        nextStep="财务审核";nextReviewer={email:reviewPolicy.finance.email,displayName:reviewPolicy.finance.name};
+      }
+      if(action === "approve" && ["财务审核","负责人终审","报销待完成"].includes(approval.currentStep)) {
+        const route=[reviewPolicy.finance,reviewPolicy.owner];
+        const decisions=Array.isArray(payload.expenseApprovals)?payload.expenseApprovals as Array<Record<string,unknown>>:[];
+        if(decisions.some((d,i)=>!route[i]||d.memberId!==route[i].memberId||d.accountUserId!==route[i].accountUserId||!d.confirmedAt)) return Response.json({error:"报销审核身份或顺序有变化，请退回重审。"},{status:409});
+        const expectedCount=approval.currentStep === "财务审核"?0:approval.currentStep === "负责人终审"?1:2;
+        if(decisions.length!==expectedCount) return Response.json({error:"必须先完成财务审核，再由负责人审核。"},{status:409});
+        if(expectedCount<2) {
+          payload={...payload,expenseApprovals:[...decisions,{...route[expectedCount],confirmedAt:now,note}]};
+          nextStep=expectedCount===0?"负责人终审":"报销待完成";
+          const next=expectedCount===0?reviewPolicy.owner:reviewPolicy.finance;
+          nextReviewer={email:next.email,displayName:next.name};
+        } else {
+          const ledgerDb=await getD1Database();
+          const meta=await ledgerDb.prepare('SELECT revision FROM expense_ledger_meta WHERE id=1').first<{revision:number}>();
+          financialLedgerRevision=meta?.revision ?? null;
+          if(financialLedgerRevision===null)throw new LedgerError('账单状态暂不可用，不能归档。',409);
+          const evidence=await assertPurchaseSettled(ledgerDb,approval.id,payload.actualAmount);
+          payload={...payload,reimbursementEvidence:evidence};nextStep="已归档";nextReviewer=null;
+        }
+        signersJson=addApprovalSigner(signersJson,{name:user.displayName,email:currentEmail,accountUserId:authorized.accountUserId,memberId:authorized.memberId,signedAt:now});
+      }
+    }
+
     if (action === "approve" && approval.type === "劳务报酬" && approval.currentStep === "项目负责人") {
       const amount = asNumber(body.suggestedAmount);
       const compensationBasis = textValue(body.compensationBasis ?? body.suggestedAmountBasis);
@@ -740,7 +821,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         suggestedAmountBy: { email: currentEmail, name: user.displayName, accountUserId: authorized.accountUserId },
       };
       const excludedFinanceEmails = canCombineLaborReviewRoles(authorized) ? [requesterEmail] : [requesterEmail, currentEmail];
-      const financeOwner = await eligibleFinanceOwner(db, excludedFinanceEmails);
+      const financeOwner = await eligibleFinanceOwner(db, administratorReview ? [...excludedFinanceEmails, initialReviewerEmail] : excludedFinanceEmails)
+        ?? (administratorReview ? { email: currentEmail, displayName: user.displayName } : null);
       if (!financeOwner) return Response.json({ error: "没有符合职责配置且已完成保密协议的经费负责人，暂时无法流转劳务报酬申请。" }, { status: 503 });
       nextReviewer = financeOwner;
       nextAmount = formatAmount(suggestedAmount);
@@ -784,6 +866,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       signersJson = addApprovalSigner(signersJson, { name: user.displayName, email: currentEmail, accountUserId: authorized.accountUserId, memberId: authorized.memberId, signedAt: now });
     }
 
+    if (administratorReview && action === "approve") payload = { ...payload, administratorReviews: [...administratorReviews(payload), { step: approval.currentStep, email: currentEmail, name: user.displayName, memberId: authorized.memberId, accountUserId: authorized.accountUserId, approvedAt: now, assignedReviewerEmail: normalizeEmail(approval.currentReviewerEmail) }] };
     const isReturn = action === "return" || action === "force_return";
     const isFinal = nextStep === "已归档";
     if (isFinal) payload = { ...payload, archivedAt: now, archivedBy: { email: currentEmail, name: user.displayName } };
@@ -802,7 +885,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const laborReviewLabel = approval.type === "劳务报酬" && action === "approve"
       ? approval.currentStep === "项目负责人" ? "项目负责人建议；" : "经费负责人终审；"
       : "";
-    const eventNote = action === "force_return" ? transitionNote : `${laborReviewLabel}${note}${note ? "；" : ""}${transitionNote}`;
+    const administratorLabel = administratorReview ? `系统管理员${action === "approve" ? "审批" : "退回"}；原指定处理人：${approval.currentReviewerName}（${approval.currentReviewerEmail}）；` : "";
+    const eventNote = action === "force_return" ? transitionNote : `${administratorLabel}${laborReviewLabel}${note}${note ? "；" : ""}${transitionNote}`;
     const finalAgreementKind = approval.type === "保密协议" ? confidentialityAgreementKindFromPayload(payload) : null;
     if (approval.type === "保密协议" && isFinal && !finalAgreementKind) return Response.json({ error: "保密文件类型或版本无效，不能归档。" }, { status: 409 });
     const nextBusinessKey = approval.type === "保密协议" && isFinal ? ndaBusinessKeyForVersion(textValue(payload.signerAccountUserId), textValue(payload.agreementVersion)) : approval.businessKey;
@@ -841,7 +925,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const ndaSubjectGuard = approval.type === "保密协议" && isFinal
       ? sql`EXISTS (SELECT 1 FROM members AS nda_subject WHERE lower(nda_subject.chatgpt_account) = ${requesterEmail} AND nda_subject.status = 'active' AND nda_subject.account_user_id = ${ndaSignerAccountUserId} AND ${ndaSubjectRoleGuard})`
       : sql`1 = 1`;
-    const update = db.update(approvals).set({ ...nextState, currentRevisionNo: revisionPlan.currentRevisionNo, currentRevisionHash: revisionPlan.currentRevisionHash }).where(and(eq(approvals.id, id), eq(approvals.updatedAt, approval.updatedAt), eq(approvals.payloadJson, approval.payloadJson), eq(approvals.currentRevisionNo, approval.currentRevisionNo), previousRevisionPointerMatches, actorGuard, ndaSubjectGuard)).returning();
+    const update = db.update(approvals).set({ ...nextState, currentRevisionNo: revisionPlan.currentRevisionNo, currentRevisionHash: revisionPlan.currentRevisionHash }).where(and(eq(approvals.id, id), eq(approvals.updatedAt, approval.updatedAt), eq(approvals.payloadJson, approval.payloadJson), eq(approvals.currentRevisionNo, approval.currentRevisionNo), previousRevisionPointerMatches, actorGuard, ndaSubjectGuard, financialLedgerRevision === null ? sql`1=1` : sql`EXISTS(SELECT 1 FROM expense_ledger_meta WHERE id=1 AND revision=${financialLedgerRevision})`)).returning();
     const revisionWrites = revisionPlan.revisions.map((revision) => conditionalApprovalRevisionInsert(db, id, now, workflowMutationRevision, revisionPlan.currentRevisionNo, revisionPlan.currentRevisionHash!, revision));
     const event = conditionalApprovalEvent(db, id, now, workflowMutationRevision, { actorName: user.displayName, actorEmail: currentEmail, action, note: eventNote });
 
@@ -899,6 +983,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
     return Response.json({ approval: serializeActionApproval(updated, authorized) }, { headers: PRIVATE_JSON_HEADERS });
   } catch (error) {
+    if (error instanceof LedgerError) return Response.json({error:error.message},{status:error.status});
     const message = error instanceof Error ? error.message : "";
     if (/period_key/i.test(message)) return Response.json({ error: "该月份已有正式劳务报酬申请，请刷新后查看。" }, { status: 409 });
     if (/labor_source_claims|member_technical_unique/i.test(message)) return Response.json({ error: "所选技术成果已被当前成员的另一份正式劳务报酬申请占用。" }, { status: 409 });

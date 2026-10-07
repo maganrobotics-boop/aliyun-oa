@@ -58,7 +58,7 @@ export async function POST(request: Request) {
       if (await knowledgeRevisionHashExists(existing.id, identity.contentHash)) return reply({ error: "修改后的内容必须与历史版本不同。" }, 409);
     } else if (returnedKnowledgeItemId) {
       existing = await findKnowledgeItem(returnedKnowledgeItemId, actor); if (!existing || !exactOwner(existing, actor)) return reply({ error: "退回知识条目不存在或当前账号不可操作。" }, 404);
-      submission = { ...submission, title: existing.title, category: existing.category, sourceLabel: existing.source_label || "", sourceUrl: existing.source_url || "" };
+      submission = { ...submission, category: existing.category, sourceLabel: existing.source_label || "", sourceUrl: existing.source_url || "" };
       identity = await chatImportIdentity(actor.accountUserId, imported.documentId, submission, 0);
       if (isAcknowledgedResubmission(existing, actor, identity.contentHash)) return acknowledgedReply(existing, imported.partCount);
       if (existing.status !== "returned") return reply({ error: "只有已退回的知识可以重新导入。" }, 409);

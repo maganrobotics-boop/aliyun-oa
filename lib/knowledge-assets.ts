@@ -1,3 +1,4 @@
+import { DELETED_KNOWLEDGE_ITEM_SQL } from "./knowledge-deletion-sql";
 import { knowledgeImageReferences } from "./knowledge-image-references.mjs";
 
 const SAFE_ASSET_PATH = /^assets\/[A-Za-z0-9][A-Za-z0-9._/-]*\.(?:webp|png|jpe?g)$/i;
@@ -17,7 +18,7 @@ export function referencedKnowledgeAssetPaths(markdown: string): string[] {
     if (/^assets\//iu.test(decoded)) references.add(normalizeKnowledgeAssetPath(decoded));
   }
   // Word/Pandoc exports keep <img> tags inside Markdown; these also require uploaded bytes.
-  for (const path of knowledgeImageReferences(markdown).keys()) references.add(path);
+  for (const path of knowledgeImageReferences(markdown, true).keys()) references.add(path);
   return [...references].sort((left, right) => left.localeCompare(right));
 }
 
@@ -70,6 +71,7 @@ export async function requirePendingKnowledgeAssetRevision(database: D1Database,
     WHERE i.id = ? AND r.id = ? AND r.status = 'pending'
       AND (i.status = 'pending' OR (i.status = 'active' AND i.active_revision_id <> i.current_revision_id))
       AND NOT EXISTS (SELECT 1 FROM migration_control WHERE deactivated_at IS NULL)
+      AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL}
   `).bind(itemId, revisionId).first();
   if (!revision) throw new Error("knowledge revision is not pending or migration is frozen");
 }
@@ -78,6 +80,69 @@ type AssetRow = {
   id: string; item_id: string; revision_id: string; asset_path: string; mime_type: string;
   byte_size: number; storage_key: string; sha256: string; upload_token: string; upload_state: string;
 };
+
+export type KnowledgeAssetCopy = {
+  id: string;
+  sourceId: string;
+  path: string;
+  storageKey: string;
+  uploadToken: string;
+};
+
+// Only remove this edit's objects, and only while no committed revision uses them.
+// If either store is unavailable, retain the object rather than risk deleting data.
+export async function discardUnreferencedKnowledgeAssetCopies(
+  database: D1Database, bucket: R2Bucket, copies: readonly KnowledgeAssetCopy[],
+): Promise<void> {
+  for (const copy of copies) {
+    try {
+      const referenced = await database.prepare(
+        "SELECT 1 FROM knowledge_revision_assets WHERE storage_key = ? LIMIT 1",
+      ).bind(copy.storageKey).first();
+      if (referenced) continue;
+      const object = await bucket.get(copy.storageKey);
+      if (object?.customMetadata?.uploadToken === copy.uploadToken) await bucket.delete(copy.storageKey);
+    } catch { /* Preserve committed data and the original save error. */ }
+  }
+}
+
+/** Preserve original bytes under distinct immutable keys for the new revision. */
+export async function copyKnowledgeRevisionAssets(
+  database: D1Database, bucket: R2Bucket, itemId: string, sourceRevisionId: string,
+  targetRevisionId: string, paths: readonly string[],
+): Promise<KnowledgeAssetCopy[]> {
+  if (paths.length > MAX_KNOWLEDGE_ASSETS) throw new Error("单份知识资料图片数量过多。");
+  const copies: KnowledgeAssetCopy[] = [];
+  try {
+    for (const path of paths) {
+      const source = await database.prepare(`
+        SELECT * FROM knowledge_revision_assets
+        WHERE item_id = ? AND revision_id = ? AND asset_path = ? AND upload_state = 'ready'
+      `).bind(itemId, sourceRevisionId, path).first<AssetRow>();
+      if (!source) throw new Error("修改后的正文引用了未上传的图片。");
+      const object = await bucket.get(source.storage_key);
+      if (!object || object.size !== Number(source.byte_size)) throw new Error("原版本图片文件缺失或大小不一致。");
+      const bytes = await object.arrayBuffer();
+      if (bytes.byteLength !== Number(source.byte_size) || await knowledgeAssetSha256(bytes) !== source.sha256) {
+        throw new Error("原版本图片校验失败。");
+      }
+      const copy = {
+        id: crypto.randomUUID(), sourceId: source.id, path: normalizeKnowledgeAssetPath(path),
+        storageKey: knowledgeAssetStorageKey(itemId, targetRevisionId, path), uploadToken: crypto.randomUUID(),
+      };
+      copies.push(copy);
+      const written = await bucket.put(copy.storageKey, bytes, {
+        onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: source.mime_type },
+        customMetadata: { sha256: source.sha256, uploadToken: copy.uploadToken }, sha256: source.sha256,
+      });
+      if (!written) throw new Error("新版本图片存储冲突。");
+    }
+    return copies;
+  } catch (error) {
+    await discardUnreferencedKnowledgeAssetCopies(database, bucket, copies);
+    throw error;
+  }
+}
 
 // R2 and D1 cannot commit together. Retain a successfully written object on a D1
 // failure so the same upload can retry; never overwrite or delete another upload.

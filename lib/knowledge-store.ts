@@ -1,3 +1,5 @@
+import { DELETED_KNOWLEDGE_ITEM_SQL } from "./knowledge-deletion-sql";
+import { parseKnowledgeDeleteItems, type KnowledgeDeleteInput, type KnowledgeBatchDeleteResult } from "./knowledge-delete-policy";
 import { getD1Database } from "../db";
 import { PUBLIC_ASSET_CONTEXT } from "./public-knowledge-assets.mjs";
 import {
@@ -22,9 +24,13 @@ import {
   type KnowledgeListOptions,
   type KnowledgeListSort,
 } from "./knowledge-types";
-import { listKnowledgeRevisionAssets } from "./knowledge-assets";
+import {
+  copyKnowledgeRevisionAssets, discardUnreferencedKnowledgeAssetCopies,
+  listKnowledgeRevisionAssets, referencedKnowledgeAssetPaths,
+} from "./knowledge-assets";
+import { getKnowledgeAssetsBucket } from "./knowledge-assets-env";
 
-const KNOWLEDGE_LIST_LIMIT = 100;
+const KNOWLEDGE_LIST_LIMIT = 1000;
 // Retrieval ranks at most six chunks. Keep the candidate pool large enough for
 // cross-document recall without hydrating the 4,096-chunk storage ceiling on
 // every question.
@@ -121,6 +127,7 @@ export type KnowledgeItemRow = {
   created_at: string;
   updated_at: string;
   revoked_at: string | null;
+  is_deleted?: number;
 };
 
 type KnowledgeRevisionStatus = KnowledgeStatus | "superseded";
@@ -340,6 +347,7 @@ function knowledgePartInsertStatements(
   mutationRevision: string,
   now: string,
   parts: readonly string[],
+  expectedStatus = "pending",
 ): D1PreparedStatement[] {
   const rows = parts.map((content, index) => ({ id: crypto.randomUUID(), partNo: index + 1, content }));
   return jsonBulkPayloads(rows).map((payload) => database.prepare(`
@@ -350,9 +358,9 @@ function knowledgePartInsertStatements(
     FROM json_each(?) AS part
     WHERE EXISTS (
       SELECT 1 FROM knowledge_items
-      WHERE id = ? AND current_revision_id = ? AND mutation_revision = ? AND status = 'pending'
+      WHERE id = ? AND current_revision_id = ? AND mutation_revision = ? AND status = ?
     )
-  `).bind(itemId, revisionId, now, payload, itemId, revisionId, mutationRevision));
+  `).bind(itemId, revisionId, now, payload, itemId, revisionId, mutationRevision, expectedStatus));
 }
 
 function knowledgeChunkInsertStatements(
@@ -517,15 +525,16 @@ function serializePublicItem(row: KnowledgeItemWithRevisionRow | KnowledgeItemLi
 function itemCapabilities(row: KnowledgeItemRow, actor: KnowledgeActor, canReview: boolean) {
   const identity = submitterIdentity(row, actor);
   const canAdminManageOwn = actor.isAdmin && identity.exact;
-  const canApprove = canReview && (!identity.overlaps || canAdminManageOwn);
-  const canModerate = canReview && !identity.overlaps;
+  const canApprove = !row.is_deleted && canReview && (!identity.overlaps || canAdminManageOwn);
+  const canModerate = !row.is_deleted && canReview && !identity.overlaps;
   return {
     canReview: canApprove && row.status === "pending",
     canReturn: canModerate && row.status === "pending",
     canReject: canModerate && row.status === "pending",
     canRevoke: canModerate && row.status === "active",
     canSetVisibility: canApprove && row.status === "active",
-    canAdminEdit: actor.isAdmin && row.status === "active",
+    canAdminEdit: !row.is_deleted && actor.isAdmin,
+    canDelete: identity.exact && !row.is_deleted,
   };
 }
 
@@ -546,6 +555,7 @@ function serializeEvent(row: KnowledgeEventRow) {
 const ITEM_WITH_REVISION_SELECT = `
   SELECT
     i.*,
+    ${DELETED_KNOWLEDGE_ITEM_SQL} AS is_deleted,
     r.summary,
     r.source_label,
     r.source_url,
@@ -567,6 +577,7 @@ const ITEM_WITH_REVISION_SELECT = `
 const LIST_ITEM_WITH_REVISION_SELECT = `
   SELECT
     i.*,
+    ${DELETED_KNOWLEDGE_ITEM_SQL} AS is_deleted,
     r.summary,
     r.source_label,
     r.source_url,
@@ -585,7 +596,8 @@ const LIST_ITEM_WITH_REVISION_SELECT = `
 
 export async function listKnowledgeItems(scope: KnowledgeListScope, actor: KnowledgeActor, canReview: boolean, options?: KnowledgeListOptions) {
   const database = await getD1Database();
-  const guard = actorGuard(actor, canReview);
+  const memberGuard = actorGuard(actor, canReview);
+  const guard = { ...memberGuard, sql: `${memberGuard.sql} AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL}` };
   let statement: D1PreparedStatement;
   let titleSort: KnowledgeListSort | undefined;
   if (scope === "mine") {
@@ -643,8 +655,8 @@ export async function listKnowledgeItems(scope: KnowledgeListScope, actor: Knowl
 export async function countPendingKnowledgeItems(actor: KnowledgeActor): Promise<number> {
   const database = await getD1Database();
   const guard = actorGuard(actor, true);
-  const row = await database.prepare(`SELECT COUNT(*) AS total FROM knowledge_items
-    WHERE status = 'pending'
+  const row = await database.prepare(`SELECT COUNT(*) AS total FROM knowledge_items AS i
+    WHERE status = 'pending' AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL}
       AND (
         (submitter_member_id <> ? AND lower(submitter_email) <> ?)
         OR (? = 1 AND submitter_member_id = ? AND lower(submitter_email) = ?)
@@ -658,7 +670,7 @@ export async function countPendingKnowledgeItems(actor: KnowledgeActor): Promise
 export async function findKnowledgeItem(id: string, actor: KnowledgeActor, requireReviewer = false): Promise<KnowledgeItemWithRevisionRow | null> {
   const database = await getD1Database();
   const guard = actorGuard(actor, requireReviewer);
-  const item = await database.prepare(`${ITEM_WITH_REVISION_SELECT} WHERE i.id = ? AND ${guard.sql} LIMIT 1`)
+  const item = await database.prepare(`${ITEM_WITH_REVISION_SELECT} WHERE i.id = ? AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL} AND ${guard.sql} LIMIT 1`)
     .bind(id, ...guard.values).first<KnowledgeItemWithRevisionRow>();
   return item ? hydrateCurrentRevisionContent(database, item) : null;
 }
@@ -841,7 +853,7 @@ export async function resubmitKnowledgeItem(
       UPDATE knowledge_items SET
         title = ?, category = ?, status = 'pending', current_revision_no = ?, current_revision_id = ?,
         active_revision_id = NULL, mutation_revision = ?, updated_at = ?, revoked_at = NULL
-      WHERE id = ? AND status = 'returned' AND current_revision_id = ? AND mutation_revision = ?
+      WHERE id = ? AND status = 'returned' AND revoked_at IS NULL AND current_revision_id = ? AND mutation_revision = ?
         AND submitter_member_id = ? AND lower(submitter_email) = ? AND ${guard.sql}
       RETURNING *
     `).bind(submission.title, submission.category, revisionNo, revisionId, mutationRevision, now,
@@ -889,6 +901,126 @@ export async function resubmitKnowledgeItem(
   }) : null;
 }
 
+/** Save title/prose edits as one atomic revision, retaining review state and immutable image bytes. */
+export async function adminUpdateKnowledgeItem(
+  existing: KnowledgeItemWithRevisionRow,
+  actor: KnowledgeActor,
+  submission: KnowledgeSubmission,
+  contentHash: string,
+  contentParts?: readonly KnowledgeContentPartInput[],
+) {
+  if (!actor.isAdmin || !existing.current_revision_id || existing.is_deleted
+    || (existing.status === "active" && existing.current_revision_id !== existing.active_revision_id)) return null;
+  const storageParts = normalizedStorageParts(submission, contentParts);
+  const paths = referencedKnowledgeAssetPaths(submission.content);
+  const database = await getD1Database();
+  if (paths.length) {
+    const available = new Set((await listKnowledgeRevisionAssets(database, existing.current_revision_id)).map(asset => asset.assetPath));
+    if (paths.some(path => !available.has(path))) throw new Error("修改后的正文引用了未上传的图片。");
+  }
+  const chunks = existing.status === "active"
+    ? chunkKnowledgeSubmission(submission, submission.content.length > MAX_KNOWLEDGE_CONTENT_LENGTH ? 2_000 : 900) : [];
+  if (chunks.length > MAX_KNOWLEDGE_CHUNKS) throw new Error("knowledge chunk limit exceeded");
+  const now = timestampAfter(existing.updated_at), revisionId = crypto.randomUUID(), mutationRevision = crypto.randomUUID();
+  const revisionNo = Number(existing.current_revision_no) + 1, guard = actorGuard(actor, true);
+  const active = existing.status === "active";
+  // Image metadata may only be inserted into a pending revision. Stage and
+  // activate within the same D1 transaction so readers never see a partial edit.
+  const stageImages = active && paths.length > 0;
+  const bucket = paths.length ? await getKnowledgeAssetsBucket() : null;
+  const copies = bucket ? await copyKnowledgeRevisionAssets(
+    database, bucket, existing.id, existing.current_revision_id, revisionId, paths,
+  ) : [];
+  try {
+    const statements: D1PreparedStatement[] = [database.prepare(`
+      UPDATE knowledge_items AS i SET title = ?, current_revision_no = ?, current_revision_id = ?,
+        active_revision_id = CASE WHEN status = 'active' THEN ? ELSE active_revision_id END,
+        mutation_revision = ?, updated_at = ?
+      WHERE id = ? AND status = ? AND current_revision_id = ? AND mutation_revision = ?
+        AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL} AND ${guard.sql}
+        ${paths.length ? `AND NOT EXISTS (SELECT 1 FROM json_each(?) AS required_asset WHERE NOT EXISTS (
+          SELECT 1 FROM knowledge_revision_assets AS source_asset WHERE source_asset.item_id = i.id
+          AND source_asset.revision_id = i.current_revision_id
+          AND source_asset.asset_path = required_asset.value AND source_asset.upload_state = 'ready'))` : ""}
+      RETURNING *
+    `).bind(submission.title, revisionNo, revisionId, stageImages ? existing.active_revision_id : revisionId, mutationRevision, now,
+      existing.id, existing.status, existing.current_revision_id, existing.mutation_revision,
+      ...guard.values, ...(paths.length ? [JSON.stringify(paths)] : [])),
+    database.prepare(`
+      INSERT INTO knowledge_revisions (
+        id, item_id, revision_no, previous_revision_id, title, category, content, summary, source_label, source_url,
+        content_hash, status, created_by_member_id, created_by_name, created_by_email,
+        reviewed_by_member_id, reviewed_by_name, reviewed_by_email, review_note,
+        created_at, reviewed_at, activated_at, retired_at
+      )
+      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+      WHERE EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)
+    `).bind(revisionId, existing.id, revisionNo, existing.current_revision_id, submission.title, submission.category,
+      storageParts.length ? "" : submission.content, submission.summary, submission.sourceLabel, submission.sourceUrl,
+      contentHash, stageImages ? "pending" : existing.status, actor.memberId, actor.name, normalizeEmail(actor.email),
+      stageImages ? null : active ? actor.memberId : existing.reviewed_by_member_id,
+      stageImages ? null : active ? actor.name : existing.reviewed_by_name,
+      stageImages ? null : active ? normalizeEmail(actor.email) : existing.reviewed_by_email,
+      stageImages ? "" : active ? "管理员直接修改" : existing.review_note || "", now,
+      stageImages ? null : active ? now : existing.reviewed_at,
+      stageImages ? null : active ? now : existing.activated_at, stageImages ? null : existing.retired_at,
+      existing.id, revisionId, mutationRevision)];
+    statements.push(...knowledgePartInsertStatements(database, existing.id, revisionId, mutationRevision, now, storageParts, existing.status));
+    if (copies.length) statements.push(database.prepare(`
+      INSERT INTO knowledge_revision_assets
+        (id, item_id, revision_id, asset_path, mime_type, byte_size, storage_key, sha256, upload_token, upload_state, created_at)
+      SELECT json_extract(asset.value, '$.id'), source.item_id, ?, source.asset_path, source.mime_type,
+        source.byte_size, json_extract(asset.value, '$.storageKey'), source.sha256,
+        json_extract(asset.value, '$.uploadToken'), 'ready', ?
+      FROM json_each(?) AS asset JOIN knowledge_revision_assets AS source
+        ON source.id = json_extract(asset.value, '$.sourceId') AND source.asset_path = json_extract(asset.value, '$.path')
+      WHERE source.item_id = ? AND source.revision_id = ? AND source.upload_state = 'ready'
+        AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)
+    `).bind(revisionId, now, JSON.stringify(copies), existing.id, existing.current_revision_id, existing.id, revisionId, mutationRevision));
+    if (stageImages) {
+      statements.push(database.prepare(`
+        UPDATE knowledge_items SET active_revision_id = current_revision_id
+        WHERE id = ? AND status = 'active' AND current_revision_id = ? AND mutation_revision = ?
+          AND active_revision_id = ?
+      `).bind(existing.id, revisionId, mutationRevision, existing.active_revision_id));
+      statements.push(database.prepare(`
+        UPDATE knowledge_revisions SET status = 'active', reviewed_by_member_id = ?, reviewed_by_name = ?,
+          reviewed_by_email = ?, review_note = '管理员直接修改', reviewed_at = ?, activated_at = ?, retired_at = NULL
+        WHERE id = ? AND item_id = ? AND status = 'pending'
+          AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND active_revision_id = ? AND mutation_revision = ?)
+      `).bind(actor.memberId, actor.name, normalizeEmail(actor.email), now, now, revisionId, existing.id,
+        existing.id, revisionId, revisionId, mutationRevision));
+    }
+    if (active) {
+      statements.push(database.prepare(`
+        UPDATE knowledge_revisions SET status = 'superseded', retired_at = ? WHERE item_id = ? AND id = ?
+          AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)
+      `).bind(now, existing.id, existing.current_revision_id, existing.id, revisionId, mutationRevision));
+      statements.push(database.prepare(`UPDATE knowledge_chunks SET is_active = 0 WHERE item_id = ? AND is_active = 1
+        AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)`)
+        .bind(existing.id, existing.id, revisionId, mutationRevision));
+      statements.push(...knowledgeChunkInsertStatements(database, existing.id, revisionId, mutationRevision, now, chunks));
+    }
+    statements.push(database.prepare(`INSERT INTO knowledge_events
+      (id,item_id,revision_id,actor_member_id,actor_name,actor_email,action,note,created_at)
+      SELECT ?,?,?,?,?,?,'admin_edited','管理员修改题目和内容，保留审核状态与可见范围',?
+      WHERE EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND current_revision_id = ? AND mutation_revision = ?)`)
+      .bind(crypto.randomUUID(), existing.id, revisionId, actor.memberId, actor.name, normalizeEmail(actor.email), now,
+        existing.id, revisionId, mutationRevision));
+    const [result] = await database.batch(statements);
+    const updated = resultRows(result as D1Result<KnowledgeItemRow>)[0];
+    if (!updated) {
+      if (bucket) await discardUnreferencedKnowledgeAssetCopies(database, bucket, copies);
+      return null;
+    }
+    return { ...serializeItem({ ...updated, active_revision_id: active ? revisionId : updated.active_revision_id }),
+      content: submission.content, summary: submission.summary };
+  } catch (error) {
+    if (bucket) await discardUnreferencedKnowledgeAssetCopies(database, bucket, copies);
+    throw error;
+  }
+}
+
 /** Stage an administrator-authored replacement while the last approved revision
  * remains live. Assets can then be uploaded atomically before activation. */
 export async function stageAdminKnowledgeEdit(
@@ -929,7 +1061,7 @@ export async function stageAdminKnowledgeEdit(
       storageParts.length ? "" : submission.content, submission.summary, submission.sourceLabel, submission.sourceUrl,
       contentHash, actor.memberId, actor.name, normalizeEmail(actor.email), now, existing.id, revisionId, mutationRevision),
   ];
-  statements.push(...knowledgePartInsertStatements(database, existing.id, revisionId, mutationRevision, now, storageParts));
+  statements.push(...knowledgePartInsertStatements(database, existing.id, revisionId, mutationRevision, now, storageParts, "active"));
   statements.push(database.prepare(`
     INSERT INTO knowledge_events (id, item_id, revision_id, actor_member_id, actor_name, actor_email, action, note, created_at)
     SELECT ?, ?, ?, ?, ?, ?, 'admin_edit_staged', '管理员修改正式知识', ?
@@ -1494,4 +1626,78 @@ export async function hasPublicActiveKnowledge(): Promise<boolean> {
     ) AS ready
   `).first<{ ready: number | string }>();
   return Number(row?.ready ?? 0) === 1;
+}
+
+
+export async function deleteReturnedKnowledgeItem(existing: KnowledgeItemWithRevisionRow, actor: KnowledgeActor): Promise<boolean> {
+  if (existing.status !== "returned" || existing.revoked_at !== null || !submitterIdentity(existing, actor).exact) return false;
+  const database = await getD1Database();
+  const guard = actorGuard(actor);
+  const now = timestampAfter(existing.updated_at), mutationRevision = crypto.randomUUID();
+  const [updated] = await database.batch([
+    database.prepare(`UPDATE knowledge_items SET mutation_revision=?, updated_at=?, revoked_at=?
+      WHERE id=? AND status='returned' AND revoked_at IS NULL AND mutation_revision=? AND current_revision_id=?
+        AND submitter_member_id=? AND lower(submitter_email)=? AND ${guard.sql} RETURNING *`)
+      .bind(mutationRevision, now, now, existing.id, existing.mutation_revision, existing.current_revision_id, actor.memberId, normalizeEmail(actor.email), ...guard.values),
+    database.prepare(`UPDATE knowledge_chunks SET is_active=0 WHERE item_id=?
+      AND EXISTS (SELECT 1 FROM knowledge_items WHERE id=? AND mutation_revision=? AND status='returned' AND revoked_at IS NOT NULL)`)
+      .bind(existing.id, existing.id, mutationRevision),
+    database.prepare(`INSERT INTO knowledge_events(id,item_id,revision_id,actor_member_id,actor_name,actor_email,action,note,created_at)
+      SELECT ?,?,?,?,?,?,'revoked','投稿人删除退回资料',?
+      WHERE EXISTS (SELECT 1 FROM knowledge_items WHERE id=? AND mutation_revision=? AND status='returned' AND revoked_at IS NOT NULL)`)
+      .bind(crypto.randomUUID(), existing.id, existing.current_revision_id, actor.memberId, actor.name, normalizeEmail(actor.email), now, existing.id, mutationRevision),
+  ]);
+  return resultRows(updated as D1Result<KnowledgeItemRow>).length === 1;
+}
+
+
+/** Tombstones preserve review evidence while immediately withdrawing every retrieval chunk. */
+export async function deleteOwnKnowledgeItems(
+  inputs: readonly KnowledgeDeleteInput[],
+  actor: KnowledgeActor,
+): Promise<KnowledgeBatchDeleteResult> {
+  const validated = parseKnowledgeDeleteItems(inputs);
+  if (!validated) throw new RangeError("invalid knowledge deletion batch");
+  const database = await getD1Database();
+  const guard = actorGuard(actor);
+  const now = new Date().toISOString();
+  const statements: D1PreparedStatement[] = [];
+  for (const input of validated) {
+    const mutationRevision = crypto.randomUUID();
+    const values = [mutationRevision, now, now, input.id, input.mutationRevision, actor.memberId, normalizeEmail(actor.email), ...guard.values];
+    // The status-transition trigger only permits active -> revoked. Other review
+    // states stay intact; their deletion event removes them from operational views.
+    statements.push(
+      database.prepare(`UPDATE knowledge_items AS i
+        SET mutation_revision = ?, updated_at = ?, revoked_at = ?
+        WHERE i.id = ? AND i.mutation_revision = ? AND i.status <> 'active'
+          AND i.submitter_member_id = ? AND lower(i.submitter_email) = ?
+          AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL} AND ${guard.sql}
+        RETURNING *`).bind(...values),
+      database.prepare(`UPDATE knowledge_items AS i
+        SET status = 'revoked', active_revision_id = NULL, mutation_revision = ?, updated_at = ?, revoked_at = ?
+        WHERE i.id = ? AND i.mutation_revision = ? AND i.status = 'active'
+          AND i.submitter_member_id = ? AND lower(i.submitter_email) = ?
+          AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL} AND ${guard.sql}
+        RETURNING *`).bind(...values),
+      database.prepare(`UPDATE knowledge_chunks SET is_active = 0 WHERE item_id = ?
+        AND EXISTS (SELECT 1 FROM knowledge_items WHERE id = ? AND mutation_revision = ?)`)
+        .bind(input.id, input.id, mutationRevision),
+      database.prepare(`INSERT INTO knowledge_events
+        (id, item_id, revision_id, actor_member_id, actor_name, actor_email, action, note, created_at)
+        SELECT ?, id, current_revision_id, ?, ?, ?, 'revoked', '投稿人删除自己上传的资料', ?
+        FROM knowledge_items WHERE id = ? AND mutation_revision = ?`)
+        .bind(crypto.randomUUID(), actor.memberId, actor.name, normalizeEmail(actor.email), now, input.id, mutationRevision),
+    );
+  }
+  const results = await database.batch(statements);
+  const deletedIds: string[] = [];
+  const failed: KnowledgeBatchDeleteResult["failed"] = [];
+  validated.forEach((input, index) => {
+    const count = resultRows(results[index * 4] as D1Result<KnowledgeItemRow>).length
+      + resultRows(results[index * 4 + 1] as D1Result<KnowledgeItemRow>).length;
+    if (count === 1) deletedIds.push(input.id);
+    else failed.push({ id: input.id, error: "资料已更新、已删除，或当前账号不能删除；请刷新后重新选择。" });
+  });
+  return { deletedIds, failed };
 }

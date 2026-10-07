@@ -100,6 +100,11 @@ const vite = await createServer({
           globalThis.${stateKey}.activationCalls.push({ existing, actor });
           return { id: existing.id, status: "active" };
         }
+        export async function deleteOwnKnowledgeItems(items, actor) {
+          globalThis.${stateKey}.deleteCalls += 1;
+          globalThis.${stateKey}.batchDeleteCalls.push({ items, actor });
+          return { deletedIds: items.map(item => item.id), failed: [] };
+        }
         export async function knowledgeRevisionHashExists() { return false; }
         export async function resubmitKnowledgeItem() { throw new Error("not used"); }
         export async function getKnowledgeItemDetail() { return null; }
@@ -111,7 +116,7 @@ const vite = await createServer({
         }
       `;
       if (id === "\0knowledge-api-rate-limit") return `
-        export async function consumeWriteRateLimit() { return true; }
+        export async function consumeWriteRateLimit() { return globalThis.${stateKey}.rateAllowed; }
       `;
       if (id === "\0knowledge-api-db") return `
         export async function getDb() { return { $client: "mock-d1" }; }
@@ -122,6 +127,7 @@ const vite = await createServer({
 });
 
 const detailRoute = await vite.ssrLoadModule("/app/api/knowledge/[id]/route.ts");
+const batchDeleteRoute = await vite.ssrLoadModule("/app/api/knowledge/batch-delete/route.ts");
 const params = { params: Promise.resolve({ id: "11111111-2222-4333-8444-555555555555" }) };
 
 function patch(body) {
@@ -137,6 +143,9 @@ beforeEach(() => {
     authorized: authorizedActor(),
     existing: existingItem(),
     findCalls: 0,
+    deleteCalls: 0,
+    batchDeleteCalls: [],
+    rateAllowed: true,
     reviewCalls: [],
     visibilityCalls: [],
     activationCalls: [],
@@ -417,4 +426,69 @@ test("范围调整保留并发、审核权限和禁止自我管理保护", async
   }), params)).status, 200);
   assert.equal(globalThis[stateKey].visibilityCalls.length, 1);
   assert.equal(globalThis[stateKey].visibilityCalls[0].actor.isAdmin, true);
+});
+
+
+function deletionRequest(mutationRevision = "item-mutation-1", headers = {}) {
+  return new Request("https://oa.example.test/api/knowledge/11111111-2222-4333-8444-555555555555", { method: "DELETE", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ mutationRevision }) });
+}
+test("knowledge DELETE requires exact owner and current revision for every status", async () => {
+  const state = globalThis[stateKey];
+  state.existing = existingItem({ status: "returned" });
+  assert.equal((await detailRoute.DELETE(deletionRequest(), params)).status, 404);
+  state.authorized = authorizedActor({ user: { email: "submit@example.com", displayName: "投稿人" }, memberId: "member-submit", accountUserId: "account-submit" });
+  assert.equal((await detailRoute.DELETE(deletionRequest("stale"), params)).status, 409);
+
+  assert.equal((await detailRoute.DELETE(deletionRequest(undefined, { origin: "https://evil.example" }), params)).status, 403);
+  assert.equal(state.deleteCalls, 0);
+  for (const status of ["pending", "returned", "rejected", "active", "revoked"]) {
+    state.existing.status = status;
+    assert.equal((await detailRoute.DELETE(deletionRequest(), params)).status, 200);
+  }
+  assert.equal(state.deleteCalls, 5);
+});
+
+function batchDeletionRequest(items = [{ id: "11111111-2222-4333-8444-555555555555", mutationRevision: "item-mutation-1" }], headers = {}, extra = {}) {
+  return new Request("https://oa.example.test/api/knowledge/batch-delete", {
+    method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ items, ...extra }),
+  });
+}
+
+test("batch deletion requires activated NDA identity and rejects cross-site requests before writes", async () => {
+  const state = globalThis[stateKey];
+  state.authorized = null;
+  assert.equal((await batchDeleteRoute.POST(batchDeletionRequest())).status, 401);
+  state.authorized = authorizedActor({ ndaCompleted: false });
+  assert.equal((await batchDeleteRoute.POST(batchDeletionRequest())).status, 403);
+  state.authorized = authorizedActor({ memberMutationRevision: undefined });
+  assert.equal((await batchDeleteRoute.POST(batchDeletionRequest())).status, 403);
+  state.authorized = authorizedActor();
+  assert.equal((await batchDeleteRoute.POST(batchDeletionRequest(undefined, { origin: "https://evil.example" }))).status, 403);
+  assert.equal((await batchDeleteRoute.POST(batchDeletionRequest(undefined, { "sec-fetch-site": "cross-site" }))).status, 403);
+  assert.equal(state.batchDeleteCalls.length, 0);
+});
+
+test("batch deletion validates IDs, revision snapshots, duplicates, body bounds and unknown keys", async () => {
+  const state = globalThis[stateKey];
+  const valid = { id: "11111111-2222-4333-8444-555555555555", mutationRevision: "item-mutation-1" };
+  for (const items of [[], [null], [{ ...valid, id: "../foreign" }], [{ ...valid, mutationRevision: "" }], [{ ...valid, force: true }], [valid, valid], Array.from({ length: 21 }, () => valid)]) {
+    assert.equal((await batchDeleteRoute.POST(batchDeletionRequest(items))).status, 400);
+  }
+  assert.equal((await batchDeleteRoute.POST(batchDeletionRequest([valid], {}, { actor: "other" }))).status, 400);
+  assert.equal((await batchDeleteRoute.POST(batchDeletionRequest([valid], { "content-type": "text/plain" }))).status, 415);
+  assert.equal(state.batchDeleteCalls.length, 0);
+});
+
+test("batch deletion uses the signed-in actor and returns per-item results without review privileges", async () => {
+  const state = globalThis[stateKey];
+  state.authorized = authorizedActor({ role: "member", isAdmin: false, canReviewKnowledge: false });
+  const response = await batchDeleteRoute.POST(batchDeletionRequest());
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("cache-control"), /no-store/u);
+  assert.deepEqual(await response.json(), { deletedIds: ["11111111-2222-4333-8444-555555555555"], failed: [] });
+  assert.equal(state.batchDeleteCalls[0].actor.memberId, "member-review");
+  assert.deepEqual(state.batchDeleteCalls[0].items, [{ id: "11111111-2222-4333-8444-555555555555", mutationRevision: "item-mutation-1" }]);
+  state.rateAllowed = false;
+  assert.equal((await batchDeleteRoute.POST(batchDeletionRequest())).status, 429);
+  assert.equal(state.batchDeleteCalls.length, 1);
 });

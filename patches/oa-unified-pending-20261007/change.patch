@@ -1,0 +1,406 @@
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -67,6 +67,8 @@
+ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+ import { NotificationStatus } from "@/components/notification-status";
+ import { OemInbox } from "@/components/oem-inbox";
++import { myReturnedApprovals } from "@/lib/my-pending-items";
++import "@/components/oa-pending-entry.css";
+ import { ProjectWorkspace } from "@/components/project-workspace";
+ import { OaAiMemberDirectory, OaAiMemberProvider, OaAiChatEntrances, OaResearchWorkspace } from "@/components/ai-member-directory";
+ import { FutureStars } from "@/components/future-stars/future-stars";
+@@ -265,7 +267,7 @@
+   return <Badge variant="outline" className={`status-badge ${meta.className}`}><span className={`status-dot ${meta.dot}`} />{status}</Badge>;
+ }
+ 
+-function Sidebar({ activeView, setActiveView, onNew, onProfile, userName = "马淦", userAvatarDataUrl = "", authProvider = "chatgpt", currentRole, isAdmin = false, canReviewKnowledge = false, selectedKnowledgeTab = "ask", onKnowledgeTab, onMyPending, onOpenChat }: { activeView: ViewKey; setActiveView: (key: ViewKey) => void; onNew: () => void; onProfile: () => void; userName?: string; userAvatarDataUrl?: string; authProvider?: AuthProvider; currentRole?: string | null; isAdmin?: boolean; canReviewKnowledge?: boolean; selectedKnowledgeTab?: KnowledgeTab; onKnowledgeTab: (tab: KnowledgeTab) => void; onMyPending: () => void; onOpenChat?: () => void }) {
++function Sidebar({ activeView, setActiveView, onNew, onProfile, userName = "马淦", userAvatarDataUrl = "", authProvider = "chatgpt", currentRole, isAdmin = false, canReviewKnowledge = false, selectedKnowledgeTab = "ask", onKnowledgeTab, onMyPending, pendingCount, onOpenChat }: { activeView: ViewKey; setActiveView: (key: ViewKey) => void; onNew: () => void; onProfile: () => void; userName?: string; userAvatarDataUrl?: string; authProvider?: AuthProvider; currentRole?: string | null; isAdmin?: boolean; canReviewKnowledge?: boolean; selectedKnowledgeTab?: KnowledgeTab; onKnowledgeTab: (tab: KnowledgeTab) => void; onMyPending: () => void; pendingCount: number | string; onOpenChat?: () => void }) {
+   const conversation = useOaConversation();
+   const [userMenuOpen, setUserMenuOpen] = useState(false);
+   const [officeOpen, setOfficeOpen] = useState(false);
+@@ -358,7 +360,7 @@
+     }
+   };
+   const workspaceItems: { key: ViewKey; label: string; icon: typeof HomeIcon }[] = [
+-    { key: "todos", label: "待处理", icon: ListTodo },
++    { key: "todos", label: "待我处理", icon: ListTodo },
+     { key: "chat", label: "消息", icon: MessageCircle },
+     { key: "people", label: "通讯录", icon: UsersRound },
+     { key: "project", label: "工作台", icon: BriefcaseBusiness },
+@@ -375,12 +377,12 @@
+     <button type="button" className="brand-lockup" onClick={() => setActiveView("project")} aria-label="返回工作台" title="返回工作台"><span className="oa-brand-symbol" aria-hidden="true"><Building2 className="size-5" /></span><div className="brand-copy"><div className="brand-name">联合研发 OA</div><div className="brand-subtitle">{officialBrand}</div></div></button>
+     <div className="oa-sidebar-scroll">
+     <span className="sidebar-section-label">工作区</span>
+-    <nav className="sidebar-nav" aria-label="核心工作区">{workspaceItems.map(({ key, label, icon: Icon }) => <button key={key} className={`sidebar-nav-item ${activeView === key ? "active" : ""}`} onClick={() => setActiveView(key)}><Icon className="size-[17px]" /><span>{label}</span></button>)}<a className="sidebar-nav-item" href="/people-workbench"><UsersRound className="size-[17px]" /><span>人员工作台</span></a></nav>
++    <nav className="sidebar-nav" aria-label="核心工作区">{workspaceItems.map(({ key, label, icon: Icon }) => <button key={key} className={`sidebar-nav-item ${activeView === key ? "active" : ""}`} onClick={() => key === "todos" ? onMyPending() : setActiveView(key)}><Icon className="size-[17px]" /><span>{label}</span>{key === "todos" && <span className={`oa-pending-count ${typeof pendingCount === "number" && pendingCount > 0 ? "has-pending" : ""}`}>{pendingCount}</span>}</button>)}<a className="sidebar-nav-item" href="/people-workbench"><UsersRound className="size-[17px]" /><span>人员工作台</span></a></nav>
+     <div className="sidebar-divider" />
+     <button type="button" data-sidebar-section="office" className="sidebar-section-label sidebar-group-toggle" aria-expanded={officeOpen} aria-controls={officeId} onClick={() => setOfficeOpen(open => !open)}><span>更多办公工具</span><ChevronRight className="size-3.5" /></button>
+     <div id={officeId} hidden={!officeOpen}>
+     <nav className="sidebar-nav" aria-label="主导航">{items.map(({ key, label, icon: Icon }) => { const itemPendingCount = key === "dashboard" ? pendingApprovalCount : key === "members" ? pendingMemberCount : key === "knowledge" ? pendingKnowledgeCount : 0; const needsAttention = itemPendingCount > 0; const attentionClass = needsAttention ? `attention attention-${key}` : ""; return <button key={key} className={`sidebar-nav-item ${activeView === key ? "active" : ""} ${attentionClass}`} onClick={() => setActiveView(key)}><Icon className="size-[17px]" /><span>{label}</span>{needsAttention && <span className="nav-count nav-count-alert">{itemPendingCount > 99 ? "99+" : itemPendingCount}</span>}</button>; })}</nav>
+-    <button type="button" className="sidebar-nav-item" onClick={onMyPending}><Clock3 className="size-[17px]" /><span>待我审批</span></button>
++    <button type="button" className="sidebar-nav-item" onClick={onMyPending}><Clock3 className="size-[17px]" /><span>待我处理</span></button>
+     <button type="button" className="sidebar-nav-item" onClick={onNew}><Plus className="size-[17px]" /><span>新建审核申请</span></button>
+     </div>
+     <div className="sidebar-divider" />
+@@ -2398,12 +2400,17 @@
+         }
+       })
+       .catch((error: unknown) => {
+-        if (!cancelled && firstLoad) { setApprovals([]); setDataReady(true); toast.error("系统数据暂不可用", { description: error instanceof Error ? error.message : "请联系管理员" }); }
++        if (!cancelled) setDataReady(false);
++        if (!cancelled && firstLoad) { setApprovals([]); toast.error("系统数据暂不可用", { description: error instanceof Error ? error.message : "请联系管理员" }); }
+       })
+       .finally(() => { firstLoad = false; });
+     void loadApprovals();
+-    const intervalId = window.setInterval(loadApprovals, 30_000);
+-    return () => { cancelled = true; window.clearInterval(intervalId); };
++    const refresh = () => { if (document.visibilityState !== "hidden") void loadApprovals(); };
++    const intervalId = window.setInterval(refresh, 30_000);
++    window.addEventListener("focus", refresh);
++    window.addEventListener("oa-pending-refresh", refresh);
++    document.addEventListener("visibilitychange", refresh);
++    return () => { cancelled = true; window.clearInterval(intervalId); window.removeEventListener("focus", refresh); window.removeEventListener("oa-pending-refresh", refresh); document.removeEventListener("visibilitychange", refresh); };
+   }, [mainAccessReady]);
+   useEffect(() => {
+     if (!mainAccessReady) return;
+@@ -2507,7 +2514,8 @@
+     const scopedApprovals = showMineOnly ? myPendingApprovals : approvals;
+     return activeFilter === "全部" ? scopedApprovals : scopedApprovals.filter((approval) => approval.type === activeFilter);
+   }, [activeFilter, approvals, myPendingApprovals, showMineOnly]);
+-  const pendingCount = dataReady && supplementalPendingCount !== null ? myPendingApprovals.length + supplementalPendingCount : "—";
++  const returnedApprovals = useMemo(() => myReturnedApprovals(approvals, session?.user?.email || ""), [approvals, session?.user?.email]);
++  const pendingCount = dataReady && supplementalPendingCount !== null ? myPendingApprovals.length + returnedApprovals.length + supplementalPendingCount : "—";
+   const currentMonthKey = localMonthKey();
+   const monthlyApproved = useMemo(() => approvals.filter((approval) => approval.createdAt.slice(0, 7) === currentMonthKey && (approval.status === "已通过" || approval.status === "已归档")), [approvals, currentMonthKey]);
+   const archivedCount = approvals.filter((approval) => approval.status === "已归档").length;
+@@ -2659,7 +2667,7 @@
+   const voidSelected = (note: string) => { void applyApplicantAction("void", note); };
+   const archiveNoteSelected = (noticeType: "correction" | "void", note: string) => applyApplicantAction("archive_note", note, noticeType);
+   const openDraftEditor = () => { if (!selectedApproval) return; const draft = selectedApproval; closeApproval(); setEditingDraft(draft); setRequestDialogEpoch((current) => current + 1); setNewOpen(true); };
+-  const openMyPending = () => { setActiveView("todos"); setActiveFilter("全部"); setShowMineOnly(false); setMobileNavOpen(false); };
++  const openMyPending = () => { navigate("todos"); setActiveFilter("全部"); window.dispatchEvent(new Event("oa-pending-refresh")); window.scrollTo({ top: 0, behavior: "auto" }); };
+   useEffect(() => {
+     const openFutureStars = () => {
+       if (session?.isAdmin && window.location.hash === "#future-stars") {
+@@ -2668,9 +2676,10 @@
+     };
+     const followLocation = () => {
+       if (!window.location.hash) { setActiveView("project"); setPrimaryView("project"); }
++      else if (window.location.hash === "#todos") { setActiveView("todos"); setPrimaryView("project"); }
+       else openFutureStars();
+     };
+-    openFutureStars();
++    if (window.location.hash === "#todos") { setActiveView("todos"); setPrimaryView("project"); } else openFutureStars();
+     window.addEventListener("hashchange", followLocation);
+     window.addEventListener("popstate", followLocation);
+     return () => {
+@@ -2678,10 +2687,10 @@
+       window.removeEventListener("popstate", followLocation);
+     };
+   }, [session?.isAdmin]);
+-  const navigate = (view: ViewKey) => { if (view === "future-stars" && !session?.isAdmin) return; window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + (view === "future-stars" ? "#future-stars" : "")); setActiveView(view); if (view === "future-stars") setPrimaryView("future-stars"); if (view === "project" || view === "todos") setPrimaryView("project"); else if (["dashboard", "requests", "members"].includes(view)) setPrimaryView("dashboard"); else if (view === "library") setPrimaryView("library"); else if (view === "chat") setPrimaryView("model"); setShowMineOnly(false); setMobileNavOpen(false); };
++  const navigate = (view: ViewKey) => { if (view === "future-stars" && !session?.isAdmin) return; window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + (view === "future-stars" ? "#future-stars" : view === "todos" ? "#todos" : "")); setActiveView(view); if (view === "future-stars") setPrimaryView("future-stars"); if (view === "project" || view === "todos") setPrimaryView("project"); else if (["dashboard", "requests", "members"].includes(view)) setPrimaryView("dashboard"); else if (view === "library") setPrimaryView("library"); else if (view === "chat") setPrimaryView("model"); setShowMineOnly(false); setMobileNavOpen(false); };
+   const openMetricApproval = (id: string) => { setMetricPanel(null); openApproval(id); };
+   const isModelHeader = activeView === "chat" || (activeView === "knowledge" && knowledgeTab === "ask");
+-  const secondaryTitle = activeView === "future-stars" ? "未来之星" : activeView === "library" ? "资料库" : activeView === "home" ? "入组导览" : activeView === "chat" ? "消息" : activeView === "mail" ? "邮箱" : activeView === "dashboard" ? "审批工作台" : activeView === "todos" ? "统一待办" : activeView === "project" ? "工作台" : activeView === "requests" ? showMineOnly ? "待我审批" : "全部申请" : activeView === "people" ? "通讯录" : activeView === "knowledge" ? knowledgeTab === "ask" ? "AI 助手" : knowledgeTab === "submit" ? "上传资料" : knowledgeTab === "mine" ? "我的资料" : knowledgeTab === "review" ? "资料审核" : "知识资料管理" : activeView === "members" ? "成员审核" : activeView === "oem" ? "官网 OEM 申请" : activeView === "notifications" ? "飞书提醒" : activeView === "profile" ? "我的" : "流程与规则";
++  const secondaryTitle = activeView === "future-stars" ? "未来之星" : activeView === "library" ? "资料库" : activeView === "home" ? "入组导览" : activeView === "chat" ? "消息" : activeView === "mail" ? "邮箱" : activeView === "dashboard" ? "审批工作台" : activeView === "todos" ? "待我处理" : activeView === "project" ? "工作台" : activeView === "requests" ? showMineOnly ? "待我审批" : "全部申请" : activeView === "people" ? "通讯录" : activeView === "knowledge" ? knowledgeTab === "ask" ? "AI 助手" : knowledgeTab === "submit" ? "上传资料" : knowledgeTab === "mine" ? "我的资料" : knowledgeTab === "review" ? "资料审核" : "知识资料管理" : activeView === "members" ? "成员审核" : activeView === "oem" ? "官网 OEM 申请" : activeView === "notifications" ? "飞书提醒" : activeView === "profile" ? "我的" : "流程与规则";
+   if (!session) return <OaLoginWorkspace loading />;
+   if (!session.registered && (session.accountBindingRequired || session.accountBindingConflict || session.platformIdentityMissing || session.externalIdentityLinkRequired || session.githubIdentityLinkRequired || session.feishuIdentityLinkRequired)) return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user}><IdentityAccessGate session={session} onRefresh={refreshSession} /></OaLoginWorkspace></>;
+   if (session.status === "pending") return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user}><PendingGate session={session} onRefresh={refreshSession} /></OaLoginWorkspace></>;
+@@ -2694,21 +2703,23 @@
+       <Toaster position="top-right" />
+       <button type="button" className={`mobile-nav-overlay ${mobileNavOpen ? "visible" : ""}`} onClick={() => { setMobileNavOpen(false); mobileMenuButtonRef.current?.focus(); }} aria-label="关闭导航" aria-hidden={!mobileNavOpen} tabIndex={mobileNavOpen ? 0 : -1} />
+       <div ref={mobileSidebarRef} id="mobile-navigation" className={`mobile-sidebar ${mobileNavOpen ? "open" : ""}`} role="dialog" aria-modal="true" aria-label="移动导航" aria-hidden={!mobileNavOpen}>
+-        <Sidebar activeView={activeView} setActiveView={navigate} onNew={() => { openNewRequest(); setMobileNavOpen(false); }} onProfile={() => navigate("profile")} userName={session.user?.displayName} userAvatarDataUrl={myAvatarDataUrl} authProvider={session.user?.authProvider} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} canReviewKnowledge={Boolean(session.canReviewKnowledge)} selectedKnowledgeTab={knowledgeTab} onKnowledgeTab={(tab) => { setKnowledgeTab(tab); navigate("knowledge"); }} onMyPending={openMyPending} onOpenChat={() => setMobileNavOpen(false)} />
++        <Sidebar activeView={activeView} setActiveView={navigate} onNew={() => { openNewRequest(); setMobileNavOpen(false); }} onProfile={() => navigate("profile")} userName={session.user?.displayName} userAvatarDataUrl={myAvatarDataUrl} authProvider={session.user?.authProvider} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} canReviewKnowledge={Boolean(session.canReviewKnowledge)} selectedKnowledgeTab={knowledgeTab} onKnowledgeTab={(tab) => { setKnowledgeTab(tab); navigate("knowledge"); }} onMyPending={openMyPending} pendingCount={pendingCount} onOpenChat={() => setMobileNavOpen(false)} />
+       </div>
+-      <div id="oa-desktop-navigation" className="oa-desktop-navigation"><Sidebar activeView={activeView} setActiveView={navigate} onNew={openNewRequest} onProfile={() => navigate("profile")} userName={session.user?.displayName} userAvatarDataUrl={myAvatarDataUrl} authProvider={session.user?.authProvider} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} canReviewKnowledge={Boolean(session.canReviewKnowledge)} selectedKnowledgeTab={knowledgeTab} onKnowledgeTab={(tab) => { setKnowledgeTab(tab); navigate("knowledge"); }} onMyPending={openMyPending} onOpenChat={() => setMobileNavOpen(false)} /></div>
++      <div id="oa-desktop-navigation" className="oa-desktop-navigation"><Sidebar activeView={activeView} setActiveView={navigate} onNew={openNewRequest} onProfile={() => navigate("profile")} userName={session.user?.displayName} userAvatarDataUrl={myAvatarDataUrl} authProvider={session.user?.authProvider} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} canReviewKnowledge={Boolean(session.canReviewKnowledge)} selectedKnowledgeTab={knowledgeTab} onKnowledgeTab={(tab) => { setKnowledgeTab(tab); navigate("knowledge"); }} onMyPending={openMyPending} pendingCount={pendingCount} onOpenChat={() => setMobileNavOpen(false)} /></div>
+       <main className="main-shell">
+         <header className={isModelHeader ? "oa-model-chat-header" : "topbar"}>
+           <button type="button" className="workspace-sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"} aria-expanded={!sidebarCollapsed} aria-controls="oa-desktop-navigation"><Menu className="size-5" /></button>
+           <button ref={mobileMenuButtonRef} className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="打开导航" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation"><Menu className="size-5" /></button>
+           {isModelHeader ? <div className="oa-model-chat-title">机器人自主移动与操作实验室</div> : <OaConversationTitle><div className="oa-topbar-secondary-title"><span className="oa-lab-title">机器人自主移动与操作实验室</span><strong>{secondaryTitle}</strong></div></OaConversationTitle>}
++          <button type="button" className={`oa-global-pending ${typeof pendingCount === "number" && pendingCount > 0 ? "has-pending" : ""}`} onClick={openMyPending} aria-label={`待我处理，${typeof pendingCount === "number" ? pendingCount + " 条" : "正在同步"}`}><ListTodo aria-hidden="true" /><span>待我处理</span><b className="oa-pending-count">{pendingCount}</b></button>
+           <div className={isModelHeader ? "oa-model-chat-actions" : "topbar-actions"}>{isModelHeader && <OaNewChatButton />}
+             <OaAccountMenu user={session.user} avatarDataUrl={myAvatarDataUrl} roleLabel={sessionRoleLabel(session.role, Boolean(session.isAdmin))} onIdentityChanged={(fullName, avatarDataUrl) => { setMyAvatarDataUrl(avatarDataUrl); setSession((current) => current?.user && current.user.email === session.user?.email ? { ...current, user: { ...current.user, displayName: fullName } } : current); }} />
+ 
+ 
+           </div>
+         </header>
+-        <div className="project-pane" hidden={activeView !== "project" && activeView !== "todos"}><ProjectWorkspace mode={activeView === "todos" ? "todos" : "project"} approvals={approvals} pendingApprovals={myPendingApprovals} onPendingCountChange={setSupplementalPendingCount} approvalsReady={dataReady} currentUserEmail={session.user?.email} people={session.user ? [{ email: session.user.email, name: session.user.displayName }] : []} canReviewKnowledge={Boolean(session.canReviewKnowledge)} canManageProject={Boolean(session.isAdmin || session.role === "project_owner")} onOpenApproval={openApproval} onOpenKnowledgeReview={() => { setKnowledgeTab("review"); navigate("knowledge"); }} onOpenLibrary={() => navigate("library")} /></div>
++        {["project", "dashboard", "requests"].includes(activeView) && <button type="button" className="oa-pending-banner" onClick={openMyPending}><ListTodo aria-hidden="true" /><span className="oa-pending-banner-copy"><strong>待我处理 <span className={`oa-pending-count ${typeof pendingCount === "number" && pendingCount > 0 ? "has-pending" : ""}`}>{pendingCount}</span></strong><small>{pendingCount === 0 ? "当前没有待办，有新事项会在这里提醒。" : "确认、审核、补充材料与任务，轮到你处理的都在这里。"}</small></span><span className="oa-pending-banner-action">查看并处理 <ArrowUpRight aria-hidden="true" /></span></button>}
++        <div className="project-pane" hidden={activeView !== "project" && activeView !== "todos"}><ProjectWorkspace mode={activeView === "todos" ? "todos" : "project"} approvals={approvals} pendingApprovals={myPendingApprovals} returnedApprovals={returnedApprovals} canReviewMembers={Boolean(session.isAdmin)} onOpenMembers={() => navigate("members")} onOpenKnowledgeMine={() => { setKnowledgeTab("mine"); navigate("knowledge"); }} onPendingCountChange={setSupplementalPendingCount} approvalsReady={dataReady} currentUserEmail={session.user?.email} people={session.user ? [{ email: session.user.email, name: session.user.displayName }] : []} canReviewKnowledge={Boolean(session.canReviewKnowledge)} canManageProject={Boolean(session.isAdmin || session.role === "project_owner")} onOpenApproval={openApproval} onOpenKnowledgeReview={() => { setKnowledgeTab("review"); navigate("knowledge"); }} onOpenLibrary={() => navigate("library")} /></div>
+         {activeView === "profile" && <nav className="oa-my-tools" aria-label="我的工具"><button type="button" onClick={() => navigate("todos")}>我的待办</button><button type="button" onClick={() => { setKnowledgeTab("mine"); navigate("knowledge"); }}>我的资料</button><button type="button" onClick={() => navigate("mail")}>邮箱</button><button type="button" onClick={() => navigate("home")}>入组导览</button><button type="button" onClick={() => navigate("rules")}>流程规则</button>{session.isAdmin && <><button type="button" onClick={() => navigate("members")}>成员审核</button><button type="button" onClick={() => navigate("notifications")}>飞书提醒</button><a href="/admin">系统管理</a></>}</nav>}
+         <div className="oa-knowledge-pane" hidden={activeView !== "knowledge" && !(mobileDirect && activeView === "chat")}><KnowledgeView canReviewKnowledge={Boolean(session.canReviewKnowledge)} isAdmin={Boolean(session.isAdmin)} activeSection={mobileDirect && activeView === "chat" ? "ask" : knowledgeTab} onSectionChange={(tab) => { setKnowledgeTab(tab); if (activeView === "library") navigate("knowledge"); }} /></div>
+         {activeView === "future-stars" ? (session.isAdmin ? <FutureStars key={session.user?.email} /> : null) : activeView === "library" ? <><OaGenericImport onSubmitted={() => window.dispatchEvent(new Event("oa-library-updated"))} /><OaLibraryWorkspace canManage={Boolean(session.canReviewKnowledge)} onMine={() => { setKnowledgeTab("mine"); navigate("knowledge"); }} onManage={() => { setKnowledgeTab("manage"); navigate("knowledge"); }} /></> : activeView === "home" ? <StudentHomeView session={session} onNavigate={navigate} onOpenNewRequest={openNewRequest} /> : activeView === "chat" ? (mobileDirect ? null : <><div className="oa-model-entrances"><button type="button" onClick={() => { setKnowledgeTab("ask"); setPrimaryView("model"); navigate("knowledge"); }}>实验室内部大模型</button><a href="https://chat.omindos.cn/" target="_blank" rel="noreferrer">实验室对外大模型 ↗</a></div><OaAiChatEntrances /><CollaborationWorkspace currentUserEmail={session.user?.email} createRequest={chatCreateRequest} /></>) : activeView === "mail" ? <MailWorkspace /> : activeView === "notifications" ? <NotificationStatus /> : activeView === "oem" ? <OemInbox /> : activeView === "members" ? <MembersView currentEmail={session.user?.email} /> : activeView === "people" ? <PeopleView currentUser={session.user} canManageDepartments={Boolean(session.isAdmin)} canViewPersonnel={Boolean(session.isAdmin || session.isFinanceOwner || session.canViewAllPersonnel)} /> : activeView === "knowledge" ? null : activeView === "todos" || activeView === "project" ? null : activeView === "profile" ? <ProfileSettingsView currentUser={session.user} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} migrationExportEnabled={session.migrationExportEnabled} migrationUnfreezeEnabled={session.migrationUnfreezeEnabled} onIdentityChanged={(fullName, avatarDataUrl) => { setMyAvatarDataUrl(avatarDataUrl); setSession((current) => current?.user ? { ...current, user: { ...current.user, displayName: fullName } } : current); }} /> : activeView === "rules" ? <RulesView /> : activeView === "requests" ? <RequestsView approvals={approvals} filteredApprovals={filteredApprovals} myPendingApprovals={myPendingApprovals} dataReady={dataReady} activeFilter={activeFilter} setActiveFilter={setActiveFilter} showMineOnly={showMineOnly} onClearMine={() => setShowMineOnly(false)} onOpen={openApproval} /> : <>
+@@ -2717,12 +2728,12 @@
+             <button type="button" className="stat-card stat-card-action stat-card-approved" onClick={() => setMetricPanel("approved")} aria-label="查看本月已通过的文档"><div className="stat-label">本月已通过</div><div className="stat-value">{monthlyApproved.length}<span>条</span></div><div className="stat-foot positive"><span className="stat-icon"><Check className="size-4" /></span><span>点击查看已完成审批文档</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
+             <button type="button" className="stat-card stat-card-action stat-card-archive" onClick={() => setMetricPanel("archive")} aria-label="查看归档完整率详情"><div className="stat-label">归档完整率</div><div className="stat-value">{archiveRatio}<span>%</span></div><div className="stat-foot positive"><span className="stat-icon"><Archive className="size-4" /></span><span>点击查看归档统计</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
+             <button type="button" className="stat-card stat-card-action stat-card-people" onClick={() => navigate("people")} aria-label="查看协作成员"><div className="stat-label">协作成员</div><div className="stat-value">{peopleCount === null ? "—" : peopleCount}<span>人</span></div><div className="stat-foot"><span className="stat-icon"><UsersRound className="size-4" /></span><span>点击查看在线成员与私聊</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
+-            <button type="button" className="stat-card stat-card-highlight stat-card-action" onClick={openMyPending} aria-label="查看统一待办"><div className="stat-label">待我处理</div><div className="stat-value">{pendingCount}<span>条</span></div><div className="stat-foot"><span className="stat-icon"><Clock3 className="size-4" /></span><span>审批、资料审核和行动项统一汇总</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
++            <button type="button" className="stat-card stat-card-highlight stat-card-action" onClick={openMyPending} aria-label="查看统一待办"><div className="stat-label">待我处理</div><div className="stat-value">{pendingCount}<span>条</span></div><div className="stat-foot"><span className="stat-icon"><Clock3 className="size-4" /></span><span>所有需要本人处理的事项</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
+           </section>
+           <FlowCard />
+         </>}
+       </main>
+-      <OaPrimaryNavigation active={primaryView} isAdmin={Boolean(session.isAdmin)} onNavigate={(view) => navigate(view === "model" ? "chat" : view)} />
++      <OaPrimaryNavigation pendingCount={pendingCount} active={primaryView} isAdmin={Boolean(session.isAdmin)} onNavigate={(view) => navigate(view === "model" ? "chat" : view)} />
+       <NewRequestDialog key={requestDialogEpoch} open={newOpen} onOpenChange={setNewOpen} onCreate={createApproval} approvals={approvals} currentUser={session.user} currentRole={session.role} isAdmin={session.isAdmin} draft={editingDraft} onDraftConsumed={() => setEditingDraft(null)} />
+       <DetailSheet approval={selectedApproval} events={detailEvents} loading={detailLoading} error={detailError} currentEmail={session.user?.email} isAdmin={session.isAdmin} open={Boolean(selectedId)} onOpenChange={(open) => { if (!open) closeApproval(); }} onRetry={retryApprovalDetail} onApprove={approveSelected} onConfirmPurchase={confirmPurchaseSelected} onReturn={returnSelected} onForceReturn={forceReturnSelected} onResubmit={resubmitSelected} onWithdraw={withdrawSelected} onVoid={voidSelected} onDeleteReturned={() => void deleteReturnedApproval()} onArchiveNote={archiveNoteSelected} onEditDraft={openDraftEditor} />
+       <MetricDialog key={metricPanel || "closed"} panel={metricPanel} approvals={approvals} monthlyApproved={monthlyApproved} archiveRatio={archiveRatio} onOpenApproval={openMetricApproval} onOpenChange={setMetricPanel} />
+--- a/app/people-workbench/page.tsx
++++ b/app/people-workbench/page.tsx
+@@ -42,7 +42,7 @@
+   const people=useMemo(()=>data?.profiles.filter(p=>p.name.includes(search)).sort((a,b)=>Number(Boolean(b.billPersonId))-Number(Boolean(a.billPersonId))||a.name.localeCompare(b.name,'zh-CN'))||[],[data,search]);
+   const upload=async(file:File|undefined)=>{if(!file||!data)return;if(file.size>2_000_000){setError('单个账单最大为 2 MB。');return;}setBusy(true);setError('');try{const buffer=await file.arrayBuffer();let csv;try{csv=new TextDecoder('utf-8',{fatal:true}).decode(buffer);}catch{csv=new TextDecoder('gb18030',{fatal:true}).decode(buffer);}const result=await api({action:'preview',csv,filename:file.name,revision:data.revision});setImportFile({filename:file.name,csv,preview:result.preview});}catch(e){setError(e instanceof Error?e.message:'无法读取账单。');}finally{setBusy(false);}};
+   const exportRows=()=>{const list=rows.flatMap(r=>[r,...r.refunds]);const keys=['交易时间','交易分类','交易对方','商品说明','收/支','金额','交易订单号','商家订单号'];const escape=(value:string)=>'"'+(/^[=+\-@]/.test(value)?"'":'')+value.replaceAll('"','""')+'"';const csv='\uFEFF'+[keys,...list.map(r=>{const raw=JSON.parse(r.source_json);return keys.map(k=>String(raw[k]||''));})].map(r=>r.map(escape).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=(profile?.name||'本人')+'-消费明细.csv';a.click();URL.revokeObjectURL(url);};
+-  return <main className="pw"><header className="pw-top"><Link href="/"><ArrowLeft size={17}/>联合研发 OA</Link><span>人员工作台</span><button disabled={busy} onClick={()=>void refresh().catch(()=>{})}><RefreshCw size={16}/>刷新</button></header>
++  return <main className="pw"><header className="pw-top"><Link href="/#todos"><ArrowLeft size={17}/>待我处理</Link><span>人员工作台</span><button disabled={busy} onClick={()=>void refresh().catch(()=>{})}><RefreshCw size={16}/>刷新</button></header>
+     <div className="pw-intro"><div><p className="pw-kicker">工作有记录 · 花费可核对 · 报酬有依据</p><h1>{profile?profile.name+'的主页':'人员列表'}</h1><p>{profile?'工作与成果、消费与报销、绩效与报酬集中查看。':'点一个人，查看工作、消费报销和应发报酬。'}</p></div>{data?.manager&&<label className="pw-upload"><Upload size={17}/>导入支付宝账单<input disabled={busy} type="file" accept=".csv" onChange={e=>{void upload(e.target.files?.[0]);e.target.value='';}}/></label>}</div>
+     {error&&<p className="pw-error" role="alert">{error}</p>}{notice&&<p className="pw-notice" role="status">{notice}</p>}
+     {importFile&&<section className="pw-import"><h2>确认导入</h2><p>{importFile.filename}</p><p>本次识别 {importFile.preview.selectedCount} 条，新增 {importFile.preview.newCount} 条，重复 {importFile.preview.duplicateCount} 条。其余 {importFile.preview.ignoredCount} 条不属于已登记人员，本次不导入。</p><p>新增消费将等待本人确认，已有报销进度保留。</p><button className="pw-primary" disabled={busy} onClick={async()=>{if(await run({action:'import',csv:importFile.csv,filename:importFile.filename},'已导入，新增消费等待本人确认。'))setImportFile(null);}}>导入账单</button><button disabled={busy} onClick={()=>setImportFile(null)}>取消</button></section>}
+--- a/components/oa-eight-entry-navigation.tsx
++++ b/components/oa-eight-entry-navigation.tsx
+@@ -13,11 +13,11 @@
+   { key: 'model', label: '大模型', icon: Bot },
+   { key: 'future-stars', label: '未来之星', icon: Sparkles },
+ ] as const;
+-export function OaPrimaryNavigation({ active, onNavigate, isAdmin = false }: { active: OaPrimaryView; onNavigate: (view: OaPrimaryView) => void; isAdmin?: boolean }) {
++export function OaPrimaryNavigation({ active, onNavigate, isAdmin = false, pendingCount = 0 }: { pendingCount?: number | string; active: OaPrimaryView; onNavigate: (view: OaPrimaryView) => void; isAdmin?: boolean }) {
+   const nav = useRef<HTMLElement>(null);
+   useOaViewport(nav);
+   return <nav ref={nav} className="oa-primary-navigation" data-future-stars={isAdmin} aria-label="OA 主导航">{OA_PRIMARY_ENTRIES.filter(entry => entry.key !== "future-stars" || isAdmin).map(({ key, label, icon: Icon }) =>
+-    <button type="button" key={key} onClick={() => onNavigate(key)} aria-current={active === key ? 'page' : undefined}><Icon aria-hidden="true" /><span>{label}</span></button>
++    <button type="button" key={key} onClick={() => onNavigate(key)} aria-current={active === key ? 'page' : undefined}><Icon aria-hidden="true" /><span>{label}</span>{key === "project" && typeof pendingCount === "number" && pendingCount > 0 && <b className="oa-pending-count oa-nav-pending" aria-label={`${pendingCount} 条待办`}>{pendingCount > 99 ? "99+" : pendingCount}</b>}</button>
+   )}</nav>;
+ }
+ 
+--- /dev/null
++++ b/components/oa-pending-entry.css
+@@ -0,0 +1,28 @@
++/* Shared count and destination for every admitted OA member. */
++.oa-app .oa-global-pending { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex-shrink: 0; margin-left: auto; min-height: 42px; padding: 8px 12px; border: 1px solid #ccddec; border-radius: 10px; background: #f3f8fd; color: #215d96; font-size: 13px; font-weight: 650; white-space: nowrap; cursor: pointer; }
++.oa-global-pending svg { width: 17px; height: 17px; }
++.oa-pending-count { display: inline-flex; align-items: center; justify-content: center; min-width: 23px; min-height: 23px; padding: 1px 6px; border-radius: 20px; background: #e1ebf5; color: #345775; font-size: 12px; font-variant-numeric: tabular-nums; font-style: normal; }
++.oa-pending-count.has-pending, .oa-global-pending.has-pending .oa-pending-count { color: #fff; background: #c34739; }
++.sidebar-nav-item .oa-pending-count { margin-left: auto; }
++.oa-pending-banner { display: flex; align-items: center; gap: 14px; width: 100%; margin: 18px 0 6px; padding: 18px 20px; text-align: left; border: 1px solid #cbdff1; border-radius: 13px; background: #f1f7fc; color: #214d72; cursor: pointer; }
++.oa-pending-banner > svg { flex-shrink: 0; width: 23px; height: 23px; }
++.oa-pending-banner-copy { flex: 1; min-width: 0; }
++.oa-pending-banner-copy > strong { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; font-size: 17px; }
++.oa-pending-banner-copy > small { display: block; margin-top: 5px; color: #61768b; font-size: 12px; line-height: 1.6; }
++.oa-pending-banner-action { display: flex; align-items: center; gap: 5px; flex-shrink: 0; font-size: 13px; font-weight: 650; }
++.oa-pending-banner-action svg { width: 17px; }
++.oa-global-pending:focus-visible,.oa-pending-banner:focus-visible { outline: 3px solid #729be1; outline-offset: 3px; }
++.oa-primary-navigation > button { position: relative; }
++.oa-primary-navigation .oa-nav-pending { position: absolute; top: 0; left: calc(50% + 7px); min-width: 19px; min-height: 19px; padding: 0 4px; background: #c34739; color: #fff; font-size: 10px; border: 2px solid #fff; }
++@media (max-width: 640px) {
++  .oa-app .oa-global-pending { gap: 5px; min-height: 40px; padding: 7px 9px; font-size: 12px; }
++  .oa-app .oa-global-pending > svg { display: none; }
++  .oa-app .topbar, .oa-app .oa-model-chat-header { gap: 8px; }
++  .oa-app .oa-topbar-secondary-title, .oa-app .oa-model-chat-title { min-width: 0; flex: 1; }
++  .oa-app .oa-topbar-secondary-title .oa-lab-title { display: none; }
++  .oa-app .oa-model-chat-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++  .oa-pending-banner { padding: 14px 12px; gap: 9px; margin-top: 12px; }
++  .oa-pending-banner-copy > strong { font-size: 16px; }
++  .oa-pending-banner > svg { display: none; }
++  .oa-pending-banner-action { font-size: 12px; }
++}
+--- a/components/project-workspace.tsx
++++ b/components/project-workspace.tsx
+@@ -5,6 +5,7 @@
+ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+ import { AlertTriangle, CalendarDays, CheckCircle2, CircleDot, ClipboardCheck, ExternalLink, FileCheck2, Flag, History, ListTodo, Plus, RefreshCw, Target } from 'lucide-react';
+ import { toast } from 'sonner';
++import { myPendingWork } from '@/lib/my-pending-items';
+ import { PersonnelTaskLink } from './personnel-task-link';
+ import { OA_PROJECT, formatProjectDueAt, projectDueSortKey, type WorkItem } from '@/lib/project-work-items';
+ import { ProjectMilestoneCard } from './project-milestone-card';
+@@ -13,8 +14,10 @@
+ 
+ type ApprovalSummary = { id: string; title: string; type: string; status: string; step: string; updatedAt: string; project?: string; currentReviewerEmail?: string };
+ type KnowledgeReviewSummary = { id: string; title: string; category: string; submitterName?: string; submitterEmail?: string };
++type MemberReviewSummary = { id: string; fullName: string; status: string };
++type ReturnedKnowledgeSummary = KnowledgeReviewSummary & { status: string };
+ type PersonOption = { email: string; name: string };
+-type Props = { mode: 'todos' | 'project'; approvals: ApprovalSummary[]; pendingApprovals: ApprovalSummary[]; onPendingCountChange: (count: number | null) => void; approvalsReady?: boolean; currentUserEmail?: string; people?: PersonOption[]; canReviewKnowledge?: boolean; canManageProject?: boolean; onOpenApproval: (id: string) => void; onOpenKnowledgeReview: () => void; onOpenLibrary?: () => void };
++type Props = { mode: 'todos' | 'project'; approvals: ApprovalSummary[]; pendingApprovals: ApprovalSummary[]; returnedApprovals?: ApprovalSummary[]; canReviewMembers?: boolean; onOpenMembers: () => void; onOpenKnowledgeMine: () => void; onPendingCountChange: (count: number | null) => void; approvalsReady?: boolean; currentUserEmail?: string; people?: PersonOption[]; canReviewKnowledge?: boolean; canManageProject?: boolean; onOpenApproval: (id: string) => void; onOpenKnowledgeReview: () => void; onOpenLibrary?: () => void };
+ const kindLabel: Record<WorkItem['kind'], string> = { task: '任务', meeting_action: '会议行动项', risk: '风险', milestone: '里程碑' };
+ const statusLabel: Record<WorkItem['status'], string> = { open: '待处理', in_progress: '进行中', done: '已完成', cancelled: '已取消' };
+ const localDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+@@ -22,9 +25,12 @@
+ const byDue = (left: WorkItem, right: WorkItem) => projectDueSortKey(left.dueAt).localeCompare(projectDueSortKey(right.dueAt)) || left.title.localeCompare(right.title, 'zh-CN');
+ async function readJson<T>(response: Response): Promise<T> { try { return await response.json() as T; } catch { throw new Error('服务器未返回有效数据，请稍后重试。'); } }
+ 
+-export function ProjectWorkspace({ mode, approvals, pendingApprovals, onPendingCountChange, approvalsReady = true, currentUserEmail = '', people = [], canReviewKnowledge = false, canManageProject = false, onOpenApproval, onOpenKnowledgeReview, onOpenLibrary }: Props) {
++export function ProjectWorkspace({ mode, approvals, pendingApprovals, returnedApprovals = [], canReviewMembers = false, onOpenMembers, onOpenKnowledgeMine, onPendingCountChange, approvalsReady = true, currentUserEmail = '', people = [], canReviewKnowledge = false, canManageProject = false, onOpenApproval, onOpenKnowledgeReview, onOpenLibrary }: Props) {
+   const [items, setItems] = useState<WorkItem[]>([]);
+   const [knowledgeReviews, setKnowledgeReviews] = useState<KnowledgeReviewSummary[]>([]);
++  const [returnedKnowledge, setReturnedKnowledge] = useState<ReturnedKnowledgeSummary[]>([]);
++  const [pendingMembers, setPendingMembers] = useState<MemberReviewSummary[]>([]);
++  const [pendingDataError, setPendingDataError] = useState(false);
+   const [directory, setDirectory] = useState<PersonOption[]>(people);
+   const [loading, setLoading] = useState(true);
+   const [error, setError] = useState('');
+@@ -50,8 +56,9 @@
+     const sequence = ++loadSequence.current;
+     setLoading(true);
+     const get = (path: string) => fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } });
+-    const [workResult, peopleResult, reviewResult] = await Promise.allSettled([
++    const [workResult, peopleResult, reviewResult, mineResult, memberResult] = await Promise.allSettled([
+       get('/api/work-items'), get('/api/people'), canReviewKnowledge ? get('/api/knowledge?scope=review') : Promise.resolve(null),
++      get('/api/knowledge?scope=mine'), canReviewMembers ? get('/api/members') : Promise.resolve(null),
+     ]);
+     if (sequence !== loadSequence.current) return;
+     try {
+@@ -61,6 +68,7 @@
+       setItems(data.items); setError('');
+     } catch (cause) { setError(cause instanceof Error ? cause.message : '读取失败'); }
+     const warnings: string[] = [];
++    let countUnavailable = false;
+     try {
+       if (peopleResult.status === 'rejected') throw new Error();
+       const data = await readJson<{ people?: Array<{ email: string; fullName: string }> }>(peopleResult.value);
+@@ -73,21 +81,40 @@
+         const data = await readJson<{ items?: KnowledgeReviewSummary[] }>(reviewResult.value);
+         if (!reviewResult.value.ok || !Array.isArray(data.items)) throw new Error();
+         setKnowledgeReviews(data.items);
+-      } catch { warnings.push('资料待审列表暂不可用。'); }
++      } catch { countUnavailable = true; warnings.push('资料待审列表暂不可用。'); }
+     }
++    try {
++      if (mineResult.status === 'rejected') throw new Error();
++      const data = await readJson<{ items?: ReturnedKnowledgeSummary[] }>(mineResult.value);
++      if (!mineResult.value.ok || !Array.isArray(data.items)) throw new Error();
++      setReturnedKnowledge(data.items.filter(item => item.status === 'returned'));
++    } catch { countUnavailable = true; warnings.push('本人资料待补充列表暂不可用。'); }
++    if (canReviewMembers) {
++      try {
++        if (memberResult.status === 'rejected' || !memberResult.value) throw new Error();
++        const data = await readJson<{ members?: MemberReviewSummary[] }>(memberResult.value);
++        if (!memberResult.value.ok || !Array.isArray(data.members)) throw new Error();
++        setPendingMembers(data.members.filter(member => member.status === 'pending'));
++      } catch { countUnavailable = true; warnings.push('成员待审列表暂不可用。'); }
++    } else setPendingMembers([]);
++    if (!canReviewKnowledge) setKnowledgeReviews([]);
++    if (sequence !== loadSequence.current) return;
++    setPendingDataError(countUnavailable);
+     setAuxiliaryError(warnings.join(' ')); setLoading(false);
+-  }, [canReviewKnowledge]);
++  }, [canReviewKnowledge, canReviewMembers]);
+   useEffect(() => {
+     void load();
+     const refresh = () => { if (document.visibilityState !== 'hidden') void load(); };
+     const timer = window.setInterval(refresh, 30_000);
+     window.addEventListener('focus', refresh);
+     window.addEventListener('oa-library-updated', refresh);
++    window.addEventListener('oa-pending-refresh', refresh);
+     document.addEventListener('visibilitychange', refresh);
+-    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('oa-library-updated', refresh); document.removeEventListener('visibilitychange', refresh); };
++    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('oa-library-updated', refresh); window.removeEventListener('oa-pending-refresh', refresh); document.removeEventListener('visibilitychange', refresh); };
+   }, [load]);
+ 
+-  const mine = items.filter(item => item.kind !== 'milestone' && item.assigneeEmail.trim().toLowerCase() === currentEmail && isOpen(item));
++  const { tasks: mine, milestones: myMilestones } = myPendingWork(items, currentEmail, canManageProject);
++  const supplementalCount = mine.length + myMilestones.length + returnedKnowledge.length + (canReviewKnowledge ? knowledgeReviews.length : 0) + (canReviewMembers ? pendingMembers.length : 0);
+   const tasks = items.filter(item => item.kind === 'task' || item.kind === 'meeting_action');
+   const countableTasks = tasks.filter(item => item.status !== 'cancelled');
+   const openItems = items.filter(isOpen);
+@@ -99,8 +126,8 @@
+   const evidence = approvals.filter(item => item.type === '技术审核').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+   const known = !loading && !error;
+   useEffect(() => {
+-    if (!loading) onPendingCountChange(error || (canReviewKnowledge && auxiliaryError.includes('资料待审')) ? null : mine.length + (canReviewKnowledge ? knowledgeReviews.length : 0));
+-  }, [loading, error, auxiliaryError, canReviewKnowledge, mine.length, knowledgeReviews.length, onPendingCountChange]);
++    if (!loading) onPendingCountChange(error || pendingDataError ? null : supplementalCount);
++  }, [loading, error, pendingDataError, supplementalCount, onPendingCountChange]);
+   const canUpdate = (item: WorkItem) => canManageProject || item.createdByEmail.toLowerCase() === currentEmail || item.assigneeEmail.toLowerCase() === currentEmail;
+ 
+   const update = async (item: WorkItem, status: WorkItem['status'], milestone?: { deliverables: string; acceptanceCriteria: string; evidence: string; acceptanceNote: string }, dueAt?: string | null, expectedUpdatedAt?: string): Promise<boolean> => {
+@@ -148,11 +175,15 @@
+   const noData = (message: string) => <p className="project-empty">{loading ? '正在读取工作项…' : error ? '数据暂不可用，请刷新重试。' : message}</p>;
+ 
+   if (mode === 'todos') return <div className="project-page">
+-    <header className="project-page-head"><div><span>统一待办</span><h1>今天需要处理的事</h1><p>{approvalsReady && known && !auxiliaryError.includes('资料待审') ? `共 ${pendingApprovals.length + mine.length + (canReviewKnowledge ? knowledgeReviews.length : 0)} 条待办，与首页“待我处理”一致。` : '审批、项目任务与会议行动项集中在这里。'}</p></div><button type="button" onClick={() => void load()} disabled={loading}><RefreshCw />刷新</button></header>
++    <header className="project-page-head"><div><span>统一待办</span><h1>待我处理</h1><p>{approvalsReady && known && !pendingDataError ? `共 ${pendingApprovals.length + returnedApprovals.length + supplementalCount} 条待办。处理完成后自动移出列表。` : '正在同步待办；暂不可用的分类会提示重试。'}</p><p>仅显示当前需要你处理的事项；账单等按一组待办汇总，标题显示明细数量。</p></div><button type="button" onClick={() => window.dispatchEvent(new Event('oa-pending-refresh'))} disabled={loading}><RefreshCw />刷新</button></header>
+     {error && <p className="project-error" role="alert">{error}</p>}{auxiliaryError && <p className="project-inline-status" role="status">{auxiliaryError}</p>}
+-    <section className="project-panel"><h2><ClipboardCheck />待我审批</h2>{!approvalsReady ? <p className="project-empty">正在读取审批…</p> : pendingApprovals.length ? pendingApprovals.map(item => <button type="button" className="approval-todo" key={item.id} onClick={() => onOpenApproval(item.id)}><div><strong>{item.title}</strong><span>{item.type} · {item.step}</span></div><b>处理</b></button>) : <p className="project-empty">目前没有待你审批的申请。</p>}</section>
++    <section className="project-panel"><h2><ClipboardCheck />待我确认与审核</h2>{!approvalsReady ? <p className="project-empty">正在读取审批…</p> : pendingApprovals.length ? pendingApprovals.map(item => <button type="button" className="approval-todo" key={item.id} onClick={() => onOpenApproval(item.id)}><div><strong>{item.title}</strong><span>{item.type} · {item.step}</span></div><b>处理</b></button>) : <p className="project-empty">目前没有待你确认或审核的申请。</p>}</section>
++    {(returnedApprovals.length > 0 || !approvalsReady) && <section className="project-panel"><h2><FileCheck2 />退回我补充的申请</h2>{!approvalsReady ? <p className="project-empty">正在同步申请状态…</p> : returnedApprovals.map(item => <button type="button" className="approval-todo" key={item.id} onClick={() => onOpenApproval(item.id)}><div><strong>{item.title}</strong><span>{item.type} · 补充材料后重新提交</span></div><b>补充</b></button>)}</section>}
++    {returnedKnowledge.length > 0 && <section className="project-panel"><h2><FileCheck2 />我的资料待补充</h2>{returnedKnowledge.map(item => <button type="button" className="approval-todo" key={item.id} onClick={onOpenKnowledgeMine}><div><strong>{item.title}</strong><span>{item.category} · 查看退回意见并补充</span></div><b>补充</b></button>)}</section>}
++    {canReviewMembers && <section className="project-panel"><h2><ClipboardCheck />成员待审</h2>{loading || auxiliaryError.includes('成员待审') ? <p className="project-empty">{loading ? '正在读取成员…' : '待审状态暂不可用，请刷新重试。'}</p> : pendingMembers.length ? pendingMembers.map(member => <button type="button" className="approval-todo" key={member.id} onClick={onOpenMembers}><div><strong>{member.fullName}</strong><span>成员准入审核</span></div><b>审核</b></button>) : <p className="project-empty">目前没有待审核的成员。</p>}</section>}
+     {canReviewKnowledge && <section className="project-panel"><h2><ClipboardCheck />资料待审</h2>{loading || auxiliaryError.includes('资料待审') ? <p className="project-empty">{loading ? '正在读取资料…' : '待审状态暂不可用，请刷新重试。'}</p> : knowledgeReviews.length ? knowledgeReviews.map(item => <button type="button" className="approval-todo" key={item.id} onClick={onOpenKnowledgeReview}><div><strong>{item.title}</strong><span>{item.category} · {item.submitterName || item.submitterEmail || '项目成员'}</span></div><b>审核</b></button>) : <p className="project-empty">目前没有待审核的资料。</p>}</section>}
+-    <section className="project-panel"><h2><ListTodo />我的任务与行动项</h2>{known && mine.length ? mine.map(workRow) : noData('目前没有分配给你的未完成工作项。')}</section>
++    <section className="project-panel"><h2><ListTodo />本人确认、报销与任务</h2>{known && mine.length ? mine.map(workRow) : noData('目前没有分配给你的未完成工作项。')}</section>
++    {known && myMilestones.length > 0 && <section className="project-panel"><h2><Flag />我的交付与验收</h2>{myMilestones.map(item => <ProjectMilestoneCard key={item.id} item={item} canEdit={canUpdate(item)} canAccept={canManageProject} busy={Boolean(updatingId)} onSave={(status, milestone, dueAt, expectedUpdatedAt) => update(item, status, milestone, dueAt, expectedUpdatedAt)} />)}</section>}
+   </div>;
+ 
+   return <div className="project-page">
+--- /dev/null
++++ b/lib/my-pending-items.ts
+@@ -0,0 +1,19 @@
++const normalizedEmail = (value?: string) => value?.trim().toLowerCase() || '';
++
++// Presentation filters only. Existing authenticated APIs remain the authority.
++export function myReturnedApprovals<T extends { status: string; requesterEmail?: string }>(items: T[], email: string) {
++  const current = normalizedEmail(email);
++  return current ? items.filter(item => item.status === '已退回' && normalizedEmail(item.requesterEmail) === current) : [];
++}
++
++type PendingWork = { kind: string; status: string; assigneeEmail: string; milestone?: { evidence?: string; acceptedAt?: string | null } | null };
++export function myPendingWork<T extends PendingWork>(items: T[], email: string, canAccept: boolean) {
++  const current = normalizedEmail(email);
++  if (!current) return { tasks: [] as T[], milestones: [] as T[] };
++  const tasks = items.filter(item => item.kind !== 'milestone' && ['open', 'in_progress'].includes(item.status) && normalizedEmail(item.assigneeEmail) === current);
++  const milestones = items.filter(item => item.kind === 'milestone' && item.status !== 'cancelled' && !item.milestone?.acceptedAt && (
++    (['open', 'in_progress'].includes(item.status) && normalizedEmail(item.assigneeEmail) === current) ||
++    (canAccept && (Boolean(item.milestone?.evidence?.trim()) || item.status === 'done'))
++  ));
++  return { tasks, milestones };
++}
+--- a/tests/fixtures/people-workbench-browser.tsx
++++ b/tests/fixtures/people-workbench-browser.tsx
+@@ -2,5 +2,5 @@
+ import {createRoot} from 'react-dom/client';
+ import Page from '../../app/people-workbench/page';
+ import {PersonnelTaskLink} from '../../components/personnel-task-link';
+-const task={id:'personnel-self-expenses-member',sourceId:'member',title:'确认本人消费账单（1 笔）',assigneeName:'测试成员',detail:'核对原账单',project:'合成测试',kind:'task' as const,status:'open' as const,priority:'normal' as const,assigneeEmail:'member@test.invalid',sourceType:'manual' as const,createdByName:'测试成员',createdByEmail:'member@test.invalid',createdAt:'',updatedAt:'',completedAt:null,dueAt:null};
++const task={id:'personnel-self-expenses-member',sourceId:'member',title:'确认本人消费账单（1 笔）',assigneeName:'测试成员',detail:'核对原账单',project:'合成测试',kind:'task' as const,status:'open' as const,priority:'normal' as const,assigneeEmail:'member@test.invalid',sourceType:'manual' as const,createdByName:'测试成员',createdByEmail:'member@test.invalid',createdAt:'',updatedAt:'',completedAt:null,dueAt:null,milestone:null};
+ createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).get('fixture')==='todo'?<PersonnelTaskLink item={task}/>:<Page/>);
+--- /dev/null
++++ b/tests/my-pending-items.test.mjs
+@@ -0,0 +1,33 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { myReturnedApprovals, myPendingWork } from '../lib/my-pending-items.ts';
++
++test('returned requests belong only to the applicant; terminal and unrelated requests disappear', () => {
++  const items = [
++    { id: 'mine', status: '已退回', requesterEmail: ' Member@Example.com ' },
++    { id: 'other', status: '已退回', requesterEmail: 'other@example.com' },
++    ...['草稿', '待审核', '已归档', '已撤回', '已作废'].map(status => ({ id: status, status, requesterEmail: 'member@example.com' })),
++  ];
++  assert.deepEqual(myReturnedApprovals(items, 'member@example.com').map(x => x.id), ['mine']);
++  assert.deepEqual(myReturnedApprovals(items, ''), []);
++});
++test('personal actions, dispute tasks and milestones stay scoped while reviewers receive submitted evidence', () => {
++  const make = (id, kind, status, assigneeEmail, milestone) => ({ id, kind, status, assigneeEmail, milestone });
++  const items = [
++    make('bill', 'task', 'open', 'MEMBER@example.com'),
++    make('dispute-other', 'task', 'open', 'other@example.com'),
++    make('done', 'task', 'done', 'member@example.com'),
++    make('cancelled', 'risk', 'cancelled', 'member@example.com'),
++    make('own-milestone', 'milestone', 'open', 'member@example.com'),
++    make('await-evidence', 'milestone', 'open', 'other@example.com'),
++    make('review', 'milestone', 'in_progress', 'other@example.com', { evidence: 'test log' }),
++    make('accepted', 'milestone', 'done', 'member@example.com', { acceptedAt: '2026-10-07', evidence: 'log' }),
++    make('cancelled-milestone', 'milestone', 'cancelled', 'member@example.com', { evidence: 'log' }),
++    make('legacy-unverified', 'milestone', 'done', 'other@example.com'),
++  ];
++  const member = myPendingWork(items, ' member@example.com ', false);
++  assert.deepEqual(member.tasks.map(x => x.id), ['bill']);
++  assert.deepEqual(member.milestones.map(x => x.id), ['own-milestone']);
++  assert.deepEqual(myPendingWork(items, 'reviewer@example.com', true).milestones.map(x => x.id), ['review', 'legacy-unverified']);
++  assert.deepEqual(myPendingWork(items, '', true), { tasks: [], milestones: [] });
++});

@@ -1,4 +1,6 @@
 "use client";
+import { administratorReviewAllowed, administratorReviews } from "../lib/administrator-approval";
+import { OaAccountMenu, OaLoginWorkspace } from "@/components/oa-account-menu";
 import { OaResearchTools } from "@/components/oa-research-tools";
 
 /* This screen intentionally synchronizes remote OA state into local form/UI state. */
@@ -65,10 +67,14 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { NotificationStatus } from "@/components/notification-status";
 import { OemInbox } from "@/components/oem-inbox";
+import { myReturnedApprovals } from "@/lib/my-pending-items";
+import "@/components/oa-pending-entry.css";
 import { ProjectWorkspace } from "@/components/project-workspace";
 import { OaAiMemberDirectory, OaAiMemberProvider, OaAiChatEntrances, OaResearchWorkspace } from "@/components/ai-member-directory";
+import { FutureStars } from "@/components/future-stars/future-stars";
 import { OaPrimaryNavigation, type OaPrimaryView } from "@/components/oa-eight-entry-navigation";
 import { OaLibraryWorkspace } from "@/components/oa-library-workspace";
+import { OaGenericImport } from "@/components/knowledge/oa-generic-import";
 import { CollaborationWorkspace, MailWorkspace } from "@/components/collaboration-workspace";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -95,12 +101,14 @@ import { ndaAdmissionIdentityKey, shouldHighlightNdaTaskEntry } from "@/lib/nda-
 import { canonicalizeSignaturePngDataUrl } from "@/lib/png-signature";
 import { createLocalDocumentId } from "@/lib/browser-document-id.mjs";
 import { toast } from "sonner";
+import { technicalPendingForEmail } from "@/lib/review-routing.mjs";
 import { circulationPeople, circulationPendingForEmail } from "@/lib/circulation-policy";
 import "./oa-polish.css";
+import "./oa-compact.css";
 
 type ApprovalType = "技术审核" | "采购审核" | "保密协议" | "劳务报酬" | "流转审批";
 type ApprovalStatus = "草稿" | "待审核" | "审批中" | "已通过" | "已退回" | "已撤回" | "已作废" | "已归档";
-type ViewKey = "library" | "home" | "chat" | "mail" | "dashboard" | "todos" | "project" | "requests" | "people" | "knowledge" | "rules" | "members" | "oem" | "notifications" | "profile";
+type ViewKey = "future-stars" | "library" | "home" | "chat" | "mail" | "dashboard" | "todos" | "project" | "requests" | "people" | "knowledge" | "rules" | "members" | "oem" | "notifications" | "profile";
 
 type Approval = {
   id: string;
@@ -133,7 +141,7 @@ type Approval = {
   terminalRevisionHash?: string | null;
   terminalStateHash?: string | null;
   archiveIntegrityError?: string;
-  feishuPdfArchive?: { status: "pending" | "uploaded" | "failed"; fileName?: string; errorCode?: string | null; updatedAt?: string };
+  feishuPdfArchive?: { status: "pending" | "uploaded" | "failed" | "disabled"; fileName?: string; errorCode?: string | null; updatedAt?: string };
 };
 
 type Developer = { name: string; email?: string; memberId?: string; work: string; ratio: string };
@@ -151,7 +159,7 @@ type ConversationSummary = { peer: { email: string; name?: string; fullName?: st
 type MetricPanel = "approved" | "archive" | null;
 type ApprovalEvent = { id: number; actorName: string; actorEmail: string; action: string; note: string; createdAt: string };
 type AuthProvider = "chatgpt" | "github" | "feishu" | "legacy";
-type SessionInfo = { registered: boolean; status?: "unregistered" | "pending" | "active" | "rejected" | "departed"; accountBindingRequired?: boolean; accountBindingConflict?: boolean; platformIdentityMissing?: boolean; externalIdentityLinkRequired?: boolean; externalIdentityProvider?: "github" | "feishu"; githubIdentityLinkRequired?: boolean; feishuIdentityLinkRequired?: boolean; chatgptLoginEnabled?: boolean; githubLoginEnabled?: boolean; feishuLoginEnabled?: boolean; migrationExportEnabled?: boolean; migrationUnfreezeEnabled?: boolean; user?: { email: string; displayName: string; authProvider?: AuthProvider } | null; role?: string | null; canReviewMembers?: boolean; canGrantMemberPermissions?: boolean; canReviewKnowledge?: boolean; isAdmin?: boolean; isFinanceOwner?: boolean; ndaCompleted?: boolean; needsNda?: boolean; ndaApprovalId?: string; error?: string };
+type SessionInfo = { registered: boolean; status?: "unregistered" | "pending" | "active" | "rejected" | "departed"; accountBindingRequired?: boolean; accountBindingConflict?: boolean; platformIdentityMissing?: boolean; externalIdentityLinkRequired?: boolean; externalIdentityProvider?: "github" | "feishu"; githubIdentityLinkRequired?: boolean; feishuIdentityLinkRequired?: boolean; chatgptLoginEnabled?: boolean; githubLoginEnabled?: boolean; feishuLoginEnabled?: boolean; migrationExportEnabled?: boolean; migrationUnfreezeEnabled?: boolean; user?: { email: string; displayName: string; authProvider?: AuthProvider } | null; role?: string | null; canReviewMembers?: boolean; canGrantMemberPermissions?: boolean; canReviewKnowledge?: boolean; isAdmin?: boolean; isFinanceOwner?: boolean; canViewAllPersonnel?: boolean; ndaCompleted?: boolean; needsNda?: boolean; ndaApprovalId?: string; error?: string };
 type FeishuBindingCandidate = { memberId: string; fullName: string; accountHint: string; department: string };
 
 async function loadApprovalDetail(id: string, signal: AbortSignal) {
@@ -259,7 +267,7 @@ function StatusBadge({ status }: { status: ApprovalStatus }) {
   return <Badge variant="outline" className={`status-badge ${meta.className}`}><span className={`status-dot ${meta.dot}`} />{status}</Badge>;
 }
 
-function Sidebar({ activeView, setActiveView, onNew, onProfile, userName = "马淦", userAvatarDataUrl = "", authProvider = "chatgpt", currentRole, isAdmin = false, canReviewKnowledge = false, selectedKnowledgeTab = "ask", onKnowledgeTab, onMyPending, onOpenChat }: { activeView: ViewKey; setActiveView: (key: ViewKey) => void; onNew: () => void; onProfile: () => void; userName?: string; userAvatarDataUrl?: string; authProvider?: AuthProvider; currentRole?: string | null; isAdmin?: boolean; canReviewKnowledge?: boolean; selectedKnowledgeTab?: KnowledgeTab; onKnowledgeTab: (tab: KnowledgeTab) => void; onMyPending: () => void; onOpenChat?: () => void }) {
+function Sidebar({ activeView, setActiveView, onNew, onProfile, userName = "马淦", userAvatarDataUrl = "", authProvider = "chatgpt", currentRole, isAdmin = false, canReviewKnowledge = false, selectedKnowledgeTab = "ask", onKnowledgeTab, onMyPending, pendingCount, onOpenChat }: { activeView: ViewKey; setActiveView: (key: ViewKey) => void; onNew: () => void; onProfile: () => void; userName?: string; userAvatarDataUrl?: string; authProvider?: AuthProvider; currentRole?: string | null; isAdmin?: boolean; canReviewKnowledge?: boolean; selectedKnowledgeTab?: KnowledgeTab; onKnowledgeTab: (tab: KnowledgeTab) => void; onMyPending: () => void; pendingCount: number | string; onOpenChat?: () => void }) {
   const conversation = useOaConversation();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [officeOpen, setOfficeOpen] = useState(false);
@@ -292,7 +300,7 @@ function Sidebar({ activeView, setActiveView, onNew, onProfile, userName = "马�
                 nextApprovalCount = (approvalsData.approvals ?? []).filter((approval) => {
                   if (approval.status !== "待审核" && approval.status !== "审批中") return false;
                   if (isStrandedCurrentMemberNda(approval)) return false;
-                  return approval.type === "流转审批" ? circulationPendingForEmail(approval.payload ?? {}, approval.step, email) : approval.currentReviewerEmail?.trim().toLowerCase() === email;
+                  return (!(["技术审核", "采购审核"].includes(approval.type) || approval.payload?.technicalWeekly === true) && administratorReviewAllowed(approval.type, approval.step, approval.status, Boolean(sessionData.isAdmin))) || (approval.type === "流转审批" ? circulationPendingForEmail(approval.payload ?? {}, approval.step, email) : technicalPendingForEmail(approval.payload ?? {},approval.step,email) || approval.currentReviewerEmail?.trim().toLowerCase() === email);
                 }).length;
               }
             } catch {
@@ -352,6 +360,7 @@ function Sidebar({ activeView, setActiveView, onNew, onProfile, userName = "马�
     }
   };
   const workspaceItems: { key: ViewKey; label: string; icon: typeof HomeIcon }[] = [
+    { key: "todos", label: "待我处理", icon: ListTodo },
     { key: "chat", label: "消息", icon: MessageCircle },
     { key: "people", label: "通讯录", icon: UsersRound },
     { key: "project", label: "工作台", icon: BriefcaseBusiness },
@@ -359,7 +368,6 @@ function Sidebar({ activeView, setActiveView, onNew, onProfile, userName = "马�
   ];
   const items: { key: ViewKey; label: string; icon: typeof HomeIcon }[] = [
     { key: "dashboard", label: "审批工作台", icon: LayoutDashboard },
-    { key: "todos", label: "统一待办", icon: ListTodo },
     { key: "requests", label: "全部申请", icon: FolderKanban },
     { key: "home", label: "入组导览", icon: HomeIcon },
     { key: "mail", label: "邮箱", icon: Mail },
@@ -369,12 +377,12 @@ function Sidebar({ activeView, setActiveView, onNew, onProfile, userName = "马�
     <button type="button" className="brand-lockup" onClick={() => setActiveView("project")} aria-label="返回工作台" title="返回工作台"><span className="oa-brand-symbol" aria-hidden="true"><Building2 className="size-5" /></span><div className="brand-copy"><div className="brand-name">联合研发 OA</div><div className="brand-subtitle">{officialBrand}</div></div></button>
     <div className="oa-sidebar-scroll">
     <span className="sidebar-section-label">工作区</span>
-    <nav className="sidebar-nav" aria-label="核心工作区">{workspaceItems.map(({ key, label, icon: Icon }) => <button key={key} className={`sidebar-nav-item ${activeView === key ? "active" : ""}`} onClick={() => setActiveView(key)}><Icon className="size-[17px]" /><span>{label}</span></button>)}</nav>
+    <nav className="sidebar-nav" aria-label="核心工作区">{workspaceItems.map(({ key, label, icon: Icon }) => <button key={key} className={`sidebar-nav-item ${activeView === key ? "active" : ""}`} onClick={() => key === "todos" ? onMyPending() : setActiveView(key)}><Icon className="size-[17px]" /><span>{label}</span>{key === "todos" && <span className={`oa-pending-count ${typeof pendingCount === "number" && pendingCount > 0 ? "has-pending" : ""}`}>{pendingCount}</span>}</button>)}<a className="sidebar-nav-item" href="/people-workbench"><UsersRound className="size-[17px]" /><span>人员工作台</span></a></nav>
     <div className="sidebar-divider" />
     <button type="button" data-sidebar-section="office" className="sidebar-section-label sidebar-group-toggle" aria-expanded={officeOpen} aria-controls={officeId} onClick={() => setOfficeOpen(open => !open)}><span>更多办公工具</span><ChevronRight className="size-3.5" /></button>
     <div id={officeId} hidden={!officeOpen}>
     <nav className="sidebar-nav" aria-label="主导航">{items.map(({ key, label, icon: Icon }) => { const itemPendingCount = key === "dashboard" ? pendingApprovalCount : key === "members" ? pendingMemberCount : key === "knowledge" ? pendingKnowledgeCount : 0; const needsAttention = itemPendingCount > 0; const attentionClass = needsAttention ? `attention attention-${key}` : ""; return <button key={key} className={`sidebar-nav-item ${activeView === key ? "active" : ""} ${attentionClass}`} onClick={() => setActiveView(key)}><Icon className="size-[17px]" /><span>{label}</span>{needsAttention && <span className="nav-count nav-count-alert">{itemPendingCount > 99 ? "99+" : itemPendingCount}</span>}</button>; })}</nav>
-    <button type="button" className="sidebar-nav-item" onClick={onMyPending}><Clock3 className="size-[17px]" /><span>待我审批</span></button>
+    <button type="button" className="sidebar-nav-item" onClick={onMyPending}><Clock3 className="size-[17px]" /><span>待我处理</span></button>
     <button type="button" className="sidebar-nav-item" onClick={onNew}><Plus className="size-[17px]" /><span>新建审核申请</span></button>
     </div>
     <div className="sidebar-divider" />
@@ -477,10 +485,14 @@ function PersonAvatar({ person, onClick, size = "large", interactive = true }: {
 }
 
 function MetricDialog({ panel, approvals, monthlyApproved, archiveRatio, onOpenApproval, onOpenChange }: { panel: MetricPanel; approvals: Approval[]; monthlyApproved: Approval[]; archiveRatio: number; onOpenApproval: (id: string) => void; onOpenChange: (panel: MetricPanel) => void }) {
+  const [archiveScope, setArchiveScope] = useState<"archived" | "pending">("archived");
   const archived = approvals.filter((approval) => approval.status === "已归档");
   const archiveEligible = approvals.filter((approval) => !["草稿", "已撤回", "已作废"].includes(approval.status));
+  const pending = archiveEligible.filter((approval) => approval.status !== "已归档");
+  const archiveDocuments = archiveScope === "archived" ? archived : pending;
+  const archiveLabel = archiveScope === "archived" ? "已归档" : "流转中";
   const PanelIcon = panel === "archive" ? Archive : Check;
-  return <Dialog open={Boolean(panel)} onOpenChange={(open) => onOpenChange(open ? panel : null)}><DialogContent className="metric-dialog"><DialogHeader><div className="dialog-title-icon"><PanelIcon className="size-5" /></div><DialogTitle>{panel === "archive" ? "归档完整率" : "本月已通过"}</DialogTitle><DialogDescription>{panel === "archive" ? "按正式流转记录统计已归档申请；草稿、已撤回和已作废不计入分母。" : "查看本月已完成审批的文档，点击文档可打开详情。"}</DialogDescription></DialogHeader>{panel === "approved" ? <div className="metric-document-list">{monthlyApproved.length ? monthlyApproved.map((approval) => <button type="button" className="metric-document" key={approval.id} onClick={() => { onOpenChange(null); onOpenApproval(approval.id); }}><div><TypeBadge type={approval.type} /><strong>{approval.title}</strong><small>{approval.createdAt} · {approval.requester}</small></div><div className="metric-document-end"><StatusBadge status={approval.status} /><ChevronRight className="size-4" /></div></button>) : <div className="metric-empty"><Check className="size-5" /><p>本月暂时没有已通过的文档</p></div>}</div> : <div className="archive-metric"><div className="archive-metric-hero"><strong>{archiveRatio}<span>%</span></strong><div><b>已归档比例</b><small>{archived.length} / {archiveEligible.length || 0} 条正式流转申请已归档</small></div></div><div className="archive-metric-bar"><span style={{ width: `${archiveRatio}%` }} /></div><div className="archive-metric-breakdown"><div><span className="archive-dot archived" /><b>{archived.length}</b><small>已归档</small></div><div><span className="archive-dot pending" /><b>{Math.max(archiveEligible.length - archived.length, 0)}</b><small>流转中</small></div></div>{archived.length ? <div className="metric-document-list">{archived.map((approval) => <button type="button" className="metric-document" key={approval.id} onClick={() => { onOpenChange(null); onOpenApproval(approval.id); }}><div><TypeBadge type={approval.type} /><strong>{approval.title}</strong><small>{approval.createdAt} · {approval.requester}</small></div><div className="metric-document-end"><StatusBadge status={approval.status} /><ChevronRight className="size-4" /></div></button>)}</div> : <div className="metric-empty"><Archive className="size-5" /><p>还没有已归档的申请</p></div>}</div>}</DialogContent></Dialog>;
+  return <Dialog open={Boolean(panel)} onOpenChange={(open) => onOpenChange(open ? panel : null)}><DialogContent className="metric-dialog"><DialogHeader><div className="dialog-title-icon"><PanelIcon className="size-5" /></div><DialogTitle>{panel === "archive" ? "归档完整率" : "本月已通过"}</DialogTitle><DialogDescription>{panel === "archive" ? "按正式流转记录统计已归档申请；草稿、已撤回和已作废不计入分母。" : "查看本月已完成审批的文档，点击文档可打开详情。"}</DialogDescription></DialogHeader>{panel === "approved" ? <div className="metric-document-list">{monthlyApproved.length ? monthlyApproved.map((approval) => <button type="button" className="metric-document" key={approval.id} onClick={() => { onOpenChange(null); onOpenApproval(approval.id); }}><div><TypeBadge type={approval.type} /><strong>{approval.title}</strong><small>{approval.createdAt} · {approval.requester}</small></div><div className="metric-document-end"><StatusBadge status={approval.status} /><ChevronRight className="size-4" /></div></button>) : <div className="metric-empty"><Check className="size-5" /><p>本月暂时没有已通过的文档</p></div>}</div> : <div className="archive-metric"><div className="archive-metric-hero"><strong>{archiveRatio}<span>%</span></strong><div><b>已归档比例</b><small>{archived.length} / {archiveEligible.length || 0} 条正式流转申请已归档</small></div></div><div className="archive-metric-bar"><span style={{ width: `${archiveRatio}%` }} /></div><div className="archive-metric-breakdown" aria-label="筛选归档状态"><button type="button" aria-pressed={archiveScope === "archived"} aria-controls="archive-document-list" aria-label={`查看已归档的 ${archived.length} 份文件`} onClick={() => setArchiveScope("archived")}><span className="archive-dot archived" /><b>{archived.length}</b><small>已归档 · 点击查看</small><ChevronRight className="archive-filter-arrow size-4" /></button><button type="button" aria-pressed={archiveScope === "pending"} aria-controls="archive-document-list" aria-label={`查看流转中的 ${pending.length} 份文件`} onClick={() => setArchiveScope("pending")}><span className="archive-dot pending" /><b>{pending.length}</b><small>流转中 · 点击查看</small><ChevronRight className="archive-filter-arrow size-4" /></button></div><h3 className="archive-list-heading" role="status">{archiveLabel}文件 · {archiveDocuments.length} 份</h3><div id="archive-document-list">{archiveDocuments.length ? <div className="metric-document-list">{archiveDocuments.map((approval) => <button type="button" className="metric-document" key={approval.id} onClick={() => { onOpenChange(null); onOpenApproval(approval.id); }}><div><TypeBadge type={approval.type} /><strong>{approval.title}</strong><small>{approval.createdAt} · {approval.requester}</small></div><div className="metric-document-end"><StatusBadge status={approval.status} /><ChevronRight className="size-4" /></div></button>)}</div> : <div className="metric-empty"><Archive className="size-5" /><p>{archiveScope === "archived" ? "还没有已归档的申请" : "目前没有流转中的申请"}</p></div>}</div></div>}</DialogContent></Dialog>;
 }
 
 function RequestsView({ approvals, filteredApprovals, myPendingApprovals, dataReady, activeFilter, setActiveFilter, showMineOnly, onClearMine, onOpen }: { approvals: Approval[]; filteredApprovals: Approval[]; myPendingApprovals: Approval[]; dataReady: boolean; activeFilter: "全部" | ApprovalType; setActiveFilter: (filter: "全部" | ApprovalType) => void; showMineOnly: boolean; onClearMine: () => void; onOpen: (id: string) => void }) {
@@ -676,7 +688,7 @@ function ChatHub({ currentUser, currentRole, isAdmin = false }: { currentUser?: 
   return <><div className="chat-hub"><button type="button" className={`icon-button chat-hub-button ${unread.size ? "has-unread" : ""}`} onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="dialog" aria-label="打开聊天" title="聊天"><MessageCircle className="size-[17px]" /><span className="chat-hub-label">聊天</span>{unread.size > 0 && <span className="chat-hub-badge">{unread.size > 9 ? "9+" : unread.size}</span>}</button>{open && <div className="chat-hub-popover" role="dialog" aria-label="会话列表"><div className="chat-hub-title"><strong>聊天</strong><span>{conversations.length} 个会话</span></div>{loading ? <div className="chat-hub-empty">正在加载会话…</div> : error ? <div className="chat-hub-empty chat-hub-error">{error}</div> : conversations.length ? conversations.map((conversation) => { const person = conversationPeer(conversation); const hasUnread = unread.has(person.email); return <button type="button" className={`chat-hub-person ${hasUnread ? "unread" : ""}`} key={person.email} onClick={() => openChat(person)}><span className="chat-person-copy"><strong>{person.fullName}</strong><small>{conversation.latestCreatedAt ? `最近消息 · ${formatChatTimestamp(conversation.latestCreatedAt)}` : "还没有消息"}</small></span>{hasUnread && <i aria-label="有新消息" />}</button>; }) : <div className="chat-hub-empty">暂无可聊天成员</div>}</div>}</div><ChatDialog key={chatPerson?.email || "chat-dialog"} person={chatPerson} currentRoleLabel={sessionRoleLabel(currentRole, isAdmin)} open={Boolean(chatPerson)} currentEmail={currentEmail} onOpenChange={(value) => { if (!value) setChatPerson(null); }} /></>;
 }
 
-function PeopleView({ currentUser, canManageDepartments = false }: { currentUser?: SessionInfo["user"]; canManageDepartments?: boolean }) {
+function PeopleView({ currentUser, canManageDepartments = false, canViewPersonnel = false }: { currentUser?: SessionInfo["user"]; canManageDepartments?: boolean; canViewPersonnel?: boolean }) {
   const [people, setPeople] = useState<Person[]>([]);
   const [departments, setDepartments] = useState<DirectoryDepartment[]>([]);
   const [selectedDepartment, setSelectedDepartment] = useState("all");
@@ -719,6 +731,8 @@ function PeopleView({ currentUser, canManageDepartments = false }: { currentUser
     return () => { cancelled = true; clearInterval(timer); };
   }, [currentEmail, loadDepartments]);
   const openProfile = (person: Person) => { setSelectedPerson(person); setProfileOpen(true); };
+  const canOpenHomepage = (person: Person) => !person.id.startsWith("account:") && (canViewPersonnel || person.email.toLowerCase() === currentEmail);
+  const openHomepage = (person: Person) => { if (canOpenHomepage(person)) window.location.assign("/people-workbench?person=" + encodeURIComponent(person.id) + "&tab=work"); else openProfile(person); };
   const openChat = (person: Person) => { setChatPerson(person); };
   const updatePerson = (person: Person) => { setPeople((current) => current.map((item) => item.email === person.email ? person : item)); setSelectedPerson(person); };
   const createDepartment = async (event: FormEvent) => {
@@ -763,12 +777,12 @@ function PeopleView({ currentUser, canManageDepartments = false }: { currentUser
   const self = people.find((person) => person.email === currentEmail);
   const visiblePeople = selectedDepartment === "all" ? people : selectedDepartment === "unassigned" ? people.filter((person) => !person.departmentId) : people.filter((person) => person.departmentId === selectedDepartment);
   return <div className="people-view">
-    <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />团队通讯录</div><h1>协作成员</h1><p>按实验室部门查找成员，查看负责方向并发起一对一沟通。</p></div><div className="people-heading-actions">{canManageDepartments && <Button variant="outline" onClick={() => setManagingDepartments((current) => !current)}><Building2 className="size-4" />部门管理</Button>}<Button variant="outline" onClick={() => self && openProfile(self)} disabled={!self}><Pencil className="size-4" />编辑我的资料</Button></div></div>
+    <div className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line" />团队通讯录</div><h1>协作成员</h1><p>按实验室部门查找成员，查看负责方向并发起一对一沟通。</p></div><div className="people-heading-actions"><a className="secondary-action" href="/people-workbench">人员主页列表</a>{canManageDepartments && <Button variant="outline" onClick={() => setManagingDepartments((current) => !current)}><Building2 className="size-4" />部门管理</Button>}<Button variant="outline" onClick={() => self && openProfile(self)} disabled={!self}><Pencil className="size-4" />编辑我的资料</Button></div></div>
     <OaAiMemberDirectory />
     <div className="people-summary"><div><UsersRound className="size-5" /><strong>{people.length}</strong><span>位协作成员</span></div><div><span className="people-online-indicator" /><strong>{onlineCount}</strong><span>人在线</span></div><small>在线状态每 30 秒刷新一次</small></div>
     <nav className="department-filter" aria-label="按部门筛选"><button type="button" className={selectedDepartment === "all" ? "active" : ""} onClick={() => setSelectedDepartment("all")}>全部 <span>{people.length}</span></button>{departments.map((department) => <button type="button" key={department.id} className={selectedDepartment === department.id ? "active" : ""} onClick={() => setSelectedDepartment(department.id)}>{department.name} <span>{people.filter((person) => person.departmentId === department.id).length}</span></button>)}<button type="button" className={selectedDepartment === "unassigned" ? "active" : ""} onClick={() => setSelectedDepartment("unassigned")}>未公开 / 未分组 <span>{people.filter((person) => !person.departmentId).length}</span></button></nav>
     {canManageDepartments && managingDepartments && <form className="department-admin-panel" onSubmit={createDepartment}><div><Building2 className="size-5" /><div><strong>新建部门</strong><span>部门编码创建后保持稳定，用于迁移和系统关联。</span></div></div><Input value={departmentName} onChange={(event) => setDepartmentName(event.target.value)} maxLength={120} placeholder="部门名称" aria-label="部门名称" /><Input value={departmentCode} onChange={(event) => setDepartmentCode(event.target.value.toLowerCase().replace(/[^a-z0-9_-]/gu, ""))} maxLength={64} placeholder="部门编码，例如 robotics" aria-label="部门编码" /><NativeSelect value={departmentParentId} onChange={(event) => setDepartmentParentId(event.target.value)} aria-label="上级部门"><NativeSelectOption value="">无上级部门</NativeSelectOption>{departments.map((department) => <NativeSelectOption key={department.id} value={department.id}>{department.name}</NativeSelectOption>)}</NativeSelect><Button type="submit" className="primary-button" disabled={departmentSaving || !departmentName.trim() || !departmentCode.trim()}>{departmentSaving ? "创建中…" : "创建部门"}</Button></form>}
-    {loading ? <div className="people-loading"><Clock3 className="size-5" />正在加载成员目录…</div> : error ? <div className="empty-state"><UsersRound className="size-6" /><p>{error}</p></div> : visiblePeople.length === 0 ? <div className="empty-state"><UsersRound className="size-6" /><p>当前部门暂无可见成员</p></div> : <div className="people-grid">{visiblePeople.map((person) => <article className="person-card" key={person.email}><div className="person-card-head"><PersonAvatar person={person} onClick={() => openProfile(person)} /><div className="person-card-identity"><button type="button" className="person-name" onClick={() => openProfile(person)}>{person.fullName}</button><span className="person-role">{roleLabel(person)}</span><span className={`person-status ${person.online ? "online" : ""}`}><i />{formatLastSeen(person)}</span></div></div><div className="person-card-profile"><span>{profileValue(person, "department", currentEmail, "未公开部门")}</span><span>{profileValue(person, "position", currentEmail, "未填写负责方向")}</span></div>{canManageDepartments && !person.id.startsWith("account:") && <NativeSelect value={person.departmentId || ""} onChange={(event) => void assignDepartment(person, event.target.value)} aria-label={`设置${person.fullName}的主部门`} disabled={assigningMemberId === person.id}><NativeSelectOption value="">选择主部门</NativeSelectOption>{departments.map((department) => <NativeSelectOption key={department.id} value={department.id}>{department.name}</NativeSelectOption>)}</NativeSelect>}<div className="person-card-actions"><button type="button" onClick={() => openProfile(person)}><UserRound className="size-3.5" />查看资料</button>{person.email !== currentEmail && person.ndaCompleted && <button type="button" onClick={() => openChat(person)}><MessageCircle className="size-3.5" />私聊</button>}</div></article>)}</div>}
+    {loading ? <div className="people-loading"><Clock3 className="size-5" />正在加载成员目录…</div> : error ? <div className="empty-state"><UsersRound className="size-6" /><p>{error}</p></div> : visiblePeople.length === 0 ? <div className="empty-state"><UsersRound className="size-6" /><p>当前部门暂无可见成员</p></div> : <div className="people-grid">{visiblePeople.map((person) => <article className="person-card" key={person.email}><div className="person-card-head"><PersonAvatar person={person} onClick={() => openProfile(person)} /><div className="person-card-identity"><button type="button" className="person-name" onClick={() => openHomepage(person)}>{person.fullName}</button><span className="person-role">{roleLabel(person)}</span><span className={`person-status ${person.online ? "online" : ""}`}><i />{formatLastSeen(person)}</span></div></div><div className="person-card-profile"><span>{profileValue(person, "department", currentEmail, "未公开部门")}</span><span>{profileValue(person, "position", currentEmail, "未填写负责方向")}</span></div>{canManageDepartments && !person.id.startsWith("account:") && <NativeSelect value={person.departmentId || ""} onChange={(event) => void assignDepartment(person, event.target.value)} aria-label={`设置${person.fullName}的主部门`} disabled={assigningMemberId === person.id}><NativeSelectOption value="">选择主部门</NativeSelectOption>{departments.map((department) => <NativeSelectOption key={department.id} value={department.id}>{department.name}</NativeSelectOption>)}</NativeSelect>}<div className="person-card-actions">{canOpenHomepage(person) && <button type="button" onClick={() => openHomepage(person)}><HomeIcon className="size-3.5" />个人主页</button>}<button type="button" onClick={() => openProfile(person)}><UserRound className="size-3.5" />查看资料</button>{person.email !== currentEmail && person.ndaCompleted && <button type="button" onClick={() => openChat(person)}><MessageCircle className="size-3.5" />私聊</button>}</div></article>)}</div>}
     <ProfileDialog person={selectedPerson} open={profileOpen} currentEmail={currentEmail} onOpenChange={setProfileOpen} onSaved={updatePerson} onChat={openChat} /><ChatDialog key={chatPerson?.email || "people-chat-dialog"} person={chatPerson} currentPerson={self} open={Boolean(chatPerson)} currentEmail={currentEmail} onOpenChange={(open) => { if (!open) setChatPerson(null); }} />
   </div>;
 }
@@ -932,7 +946,7 @@ function ProfileSettingsView({ currentUser, currentRole, isAdmin = false, migrat
     <div className="profile-settings-view">
       <div className="page-heading profile-settings-heading">
         <div><div className="eyebrow"><span className="eyebrow-line" />账户设置</div><h1>个人设置</h1><p>完善协作资料，并自主决定哪些个人内容展示给团队成员。</p></div>
-        <Badge variant="outline" className="profile-settings-badge"><ShieldCheck className="size-3.5" />个人资料仅本人可改</Badge>
+        <a className="secondary-action" href="/people-workbench?person=me&tab=work"><HomeIcon className="size-4" />我的个人主页</a><Badge variant="outline" className="profile-settings-badge"><ShieldCheck className="size-3.5" />个人资料仅本人可改</Badge>
       </div>
       {loading ? <div className="profile-settings-loading"><Clock3 className="size-5" />正在加载个人资料…</div> : error ? <div className="empty-state profile-settings-error"><UserRound className="size-6" /><p>{error}</p></div> : (
         <div className="profile-settings-grid">
@@ -1201,7 +1215,7 @@ function NewRequestDialog({ open, onOpenChange, onCreate, approvals, currentUser
       if ([...circulationRecipients, ...circulationApprovers].some((id) => !people.some((person) => person.id === id))) { toast.error("所选成员已失效，请重新选择"); return; }
     }
     const reviewer = eligibleReviewers.find((item) => item.email === reviewerEmail);
-    if (!isDraft && formType !== "流转审批" && !ndaDirectArchive && !reviewer) {
+    if (!isDraft && formType !== "流转审批" && formType !== "技术审核" && formType !== "采购审核" && !ndaDirectArchive && !reviewer) {
       toast.error("请先选择审核人", { description: reviewerLoading ? "正在加载可选审核人，请稍候。" : "当前类型需要先指定有对应权限的成员。" });
       return;
     }
@@ -1260,7 +1274,7 @@ function NewRequestDialog({ open, onOpenChange, onCreate, approvals, currentUser
     <TabsContent value="采购审核" className="form-content"><Field label="采购事项名称" required><Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：D50W 关节驱动器样机采购" /></Field><div className="form-grid-2"><Field label="物品名称 / 型号规格" required><Input value={itemSpec} onChange={(event) => setItemSpec(event.target.value)} placeholder="名称、品牌、型号或关键规格" /></Field><Field label="数量" required><Input value={quantity} onChange={(event) => setQuantity(event.target.value)} type="number" min="1" /></Field></div><div className="form-grid-2"><Field label="预计金额（元）" required><Input value={amount} onChange={(event) => setAmount(event.target.value)} type="number" min="0" placeholder="0.00" /></Field><Field label="建议采购成员（可选）"><NativeSelect value={purchaserEmail} onChange={(event) => setPurchaserEmail(event.target.value)} className="w-full"><NativeSelectOption value="">暂不建议</NativeSelectOption>{eligiblePurchasers.map((person) => <NativeSelectOption key={person.email} value={person.email}>{person.fullName} · {person.email}</NativeSelectOption>)}</NativeSelect></Field></div><Field label="采购用途" required><Textarea value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="用于哪个机器人版本、哪个测试环节，为什么需要采购。" rows={3} /></Field><Field label="购买链接 / 供应商" required><Input value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="粘贴链接或填写供应商名称" /></Field><div className="form-callout amber"><Info className="size-4" /><span>申请人只能建议采购成员；技术顾问、项目负责人和最终采购人必须分别由不同实名账号担任。</span></div></TabsContent>
     <TabsContent value="保密协议" className="form-content"><Field label="签署人" required><Input value={signer} readOnly placeholder="当前登录成员姓名" /></Field><Field label="接触的未公开信息范围" required><Textarea value={confidentialScope} onChange={(event) => setConfidentialScope(event.target.value)} rows={3} /></Field><NdaAgreement kind={confidentialityKind} signer={signer} confidentialScope={confidentialScope} /><div className="signature-heading"><div><strong>本人手写电子签</strong><span>可用手指、触控笔或鼠标签名</span></div><FileSignature className="size-5" /></div><SignaturePad key={signatureResetKey} onChange={(signature) => { setSignatureDataUrl(signature); setNdaPreviewed(false); setNdaAgreed(false); }} /><div className="nda-preview-actions"><Button type="button" variant="outline" disabled={!signatureDataUrl} onClick={() => setNdaPreviewed(true)}><FileCheck2 className="size-4" />{ndaPreviewed ? "已预览文件" : "预览已签文件"}</Button>{ndaPreviewed && <span className="preview-confirmed"><Check className="size-3.5" />预览完成，请确认后提交</span>}</div>{ndaPreviewed && <div className="nda-signed-preview"><div className="nda-signed-preview-label"><FileCheck2 className="size-4" />签署后预览</div><NdaAgreement kind={confidentialityKind} signer={signer} confidentialScope={confidentialScope} signatureDataUrl={signatureDataUrl} /></div>}<label className="nda-consent"><input type="checkbox" checked={ndaAgreed} onChange={(event) => setNdaAgreed(event.target.checked)} disabled={!ndaPreviewed} /><span>我已阅读以上{confidentialityAgreementTitle(confidentialityKind)}正文，确认签名为本人手写，并同意按对应流程提交归档。</span></label><div className="form-callout purple"><ShieldCheck className="size-4" /><span>{ndaDirectArchive ? confidentialityKind === "member" ? "本人签署后立即生效并由系统自动归档；项目负责人可查阅，无需另行审核。" : "OA 管理员本人签署后由系统自动归档。" : "本人签署后提交 OA 管理员确认并归档。"}</span></div></TabsContent>
     <TabsContent value="劳务报酬" className="form-content"><Field label="报酬所属月份" required><Input value={laborMonth} onChange={(event) => setLaborMonth(event.target.value)} type="month" /></Field><div className="labor-source-heading"><FieldLabel>已归档技术成果与我的贡献</FieldLabel><span>折算公式：成果总工时 × 我的贡献率</span></div>{laborSourceOptions.length ? <div className="labor-source-list">{laborSourceOptions.map((source) => { const selected = laborSourceIds.includes(source.approval.id); return <label className={`labor-source-option ${selected ? "selected" : ""}`} key={source.approval.id}><input type="checkbox" checked={selected} onChange={() => setLaborSourceIds((current) => current.includes(source.approval.id) ? current.filter((id) => id !== source.approval.id) : [...current, source.approval.id])} /><span className="labor-source-copy"><strong>{source.approval.title}</strong><small>{source.approval.id} · 总工时 {source.totalWorkHours} 小时 · 你的贡献 {source.contributionRate}%</small><small>折算贡献：{source.weightedHours.toFixed(2)} 小时</small></span><Check className="labor-source-check size-4" /></label>; })}</div> : <div className="form-callout amber"><Info className="size-4" /><span>当前没有可申报的已归档技术成果。请先登记本人实际工作与贡献占比并完成归档；已在其他劳务申请中使用的成果不能重复选择。</span></div>}<div className="labor-score"><div><span>已选技术成果折算值</span><strong>{laborScore.toFixed(2)} 小时</strong></div><div className="labor-total-score"><span>加上本月其他工时后的综合核算</span><strong>{laborTotalScore.toFixed(2)} 小时</strong></div><small>本月其他工时不得包含上方已选成果的工时；系统提交时会依据正式归档记录重新核算。</small></div><Field label="本月其他工作时间（小时，不含已选成果工时）" required><Input value={laborMonthlyHours} onChange={(event) => setLaborMonthlyHours(event.target.value)} type="number" min="0" step="0.01" placeholder="没有其他工时可填 0" /></Field><Field label="本月工作与贡献陈述" required><Textarea value={laborStatement} onChange={(event) => setLaborStatement(event.target.value)} rows={5} placeholder="说明本月其他工作、已归档成果贡献、协作情况和下月计划；不要重复计算已选成果工时。" /></Field><div className="form-callout amber"><CircleDollarSign className="size-4" /><span>综合核算值用于形成申报依据，不自动等同劳务金额。项目负责人须填写建议金额及不少于 10 字的依据，系统自动显示折算单价；经费负责人终审后归档。</span></div></TabsContent>
-   </Tabs></form>{formType !== "流转审批" && <ReviewerAssignment formType={formType} agreementKind={confidentialityKind} autoArchive={ndaDirectArchive} reviewers={eligibleReviewers} reviewerEmail={reviewerEmail} onReviewerChange={setReviewerEmail} loading={reviewerLoading} />}<DialogFooter className="request-footer" aria-busy={submitting}><Button type="button" variant="outline" onClick={() => void submitRequest(true)} disabled={submitting}><FilePenLine className="size-4" />{submitting ? "保存中…" : "保存草稿"}</Button><Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>取消</Button><Button type="submit" className="primary-button" form="new-request-form" disabled={submitting || (formType === "流转审批" ? !peopleLoaded || (!circulationRecipients.length && !circulationApprovers.length) : !ndaDirectArchive && (reviewerLoading || eligibleReviewers.length === 0 || !reviewerEmail))}><Send className="size-4" />{submitting ? "提交中…" : ndaDirectArchive && formType === "保密协议" ? "签署并归档" : "提交审核申请"}</Button></DialogFooter></DialogContent></Dialog>;
+   </Tabs></form>{["技术审核","采购审核"].includes(formType) && <p className="reviewer-help">由指定技术与采购审核人任意一人签字后，再交负责人审核。技术工作先由开发人本人确认。</p>}{formType !== "流转审批" && formType !== "技术审核" && formType !== "采购审核" && <ReviewerAssignment formType={formType} agreementKind={confidentialityKind} autoArchive={ndaDirectArchive} reviewers={eligibleReviewers} reviewerEmail={reviewerEmail} onReviewerChange={setReviewerEmail} loading={reviewerLoading} />}<DialogFooter className="request-footer" aria-busy={submitting}><Button type="button" variant="outline" onClick={() => void submitRequest(true)} disabled={submitting}><FilePenLine className="size-4" />{submitting ? "保存中…" : "保存草稿"}</Button><Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>取消</Button><Button type="submit" className="primary-button" form="new-request-form" disabled={submitting || (formType === "流转审批" ? !peopleLoaded || (!circulationRecipients.length && !circulationApprovers.length) : formType !== "技术审核" && formType !== "采购审核" && !ndaDirectArchive && (reviewerLoading || eligibleReviewers.length === 0 || !reviewerEmail))}><Send className="size-4" />{submitting ? "提交中…" : ndaDirectArchive && formType === "保密协议" ? "签署并归档" : "提交审核申请"}</Button></DialogFooter></DialogContent></Dialog>;
 }
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) { return <label className="form-field"><FieldLabel>{label} {required && <span className="required-mark">*</span>}</FieldLabel>{children}</label>; }
@@ -1701,7 +1715,7 @@ async function provisionCurrentFeishuMember(confirmation?: "none-of-these-accoun
   return nextSession;
 }
 
-function RegistrationGate({ initialUser, initialStatus, chatgptLoginEnabled = true, githubLoginEnabled = false, feishuLoginEnabled = false, onRegistered }: { initialUser?: SessionInfo["user"]; initialStatus?: SessionInfo["status"]; chatgptLoginEnabled?: boolean; githubLoginEnabled?: boolean; feishuLoginEnabled?: boolean; onRegistered: (session: SessionInfo) => void }) {
+function RegistrationGate({ initialUser, initialStatus, chatgptLoginEnabled = true, githubLoginEnabled = false, feishuLoginEnabled = false, compact = false, onRegistered }: { compact?: boolean; initialUser?: SessionInfo["user"]; initialStatus?: SessionInfo["status"]; chatgptLoginEnabled?: boolean; githubLoginEnabled?: boolean; feishuLoginEnabled?: boolean; onRegistered: (session: SessionInfo) => void }) {
   const [refreshing, setRefreshing] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
   const [bindingCandidates, setBindingCandidates] = useState<FeishuBindingCandidate[]>([]);
@@ -1800,7 +1814,7 @@ function RegistrationGate({ initialUser, initialStatus, chatgptLoginEnabled = tr
     }
   };
   return (
-    <div className="registration-shell oa-login-shell">
+    <div className={`registration-shell oa-login-shell ${compact ? "oa-account-login" : ""}`}>
       <section className="oa-login-story" aria-labelledby="oa-login-story-title">
         <div className="oa-login-wordmark"><span className="oa-brand-symbol" aria-hidden="true"><Building2 className="size-5" /></span><span>{officialBrand}</span></div>
         <div className="oa-login-story-copy"><span className="oa-login-kicker">联合研发工作空间</span><h2 id="oa-login-story-title">让每一步研发，<br />都有清晰的进展。</h2><p>把项目协作、审批办理与知识积累，汇集到同一个工作空间。</p></div>
@@ -2017,7 +2031,7 @@ function MembersView({ currentEmail }: { currentEmail?: string }) {
   </>;
 }
 
-function DetailSheet({ approval, events, open, loading, error, currentEmail, isAdmin, onOpenChange, onRetry, onApprove, onConfirmPurchase, onReturn, onForceReturn, onResubmit, onWithdraw, onVoid, onArchiveNote, onEditDraft }: { approval: Approval | null; events: ApprovalEvent[]; open: boolean; loading: boolean; error: string; currentEmail?: string; isAdmin?: boolean; onOpenChange: (open: boolean) => void; onRetry: () => void; onApprove: (nextReviewerEmail?: string, suggestedAmount?: string, finalAmount?: string, financeNote?: string, compensationBasis?: string, purchaserEmail?: string, circulationNote?: string) => void; onConfirmPurchase: (purchaseNote: string, actualAmount: string) => void; onReturn: (note: string) => void; onForceReturn: (note: string) => void; onResubmit: (note: string) => void; onWithdraw: (note: string) => void; onVoid: (note: string) => void; onArchiveNote: (noticeType: "correction" | "void", note: string) => Promise<boolean>; onEditDraft: () => void }) {
+function DetailSheet({ approval, events, open, loading, error, currentEmail, isAdmin, onOpenChange, onRetry, onApprove, onConfirmPurchase, onReturn, onForceReturn, onResubmit, onWithdraw, onVoid, onDeleteReturned, onArchiveNote, onEditDraft }: { approval: Approval | null; events: ApprovalEvent[]; open: boolean; loading: boolean; error: string; currentEmail?: string; isAdmin?: boolean; onOpenChange: (open: boolean) => void; onRetry: () => void; onApprove: (nextReviewerEmail?: string, suggestedAmount?: string, finalAmount?: string, financeNote?: string, compensationBasis?: string, purchaserEmail?: string, circulationNote?: string) => void; onConfirmPurchase: (purchaseNote: string, actualAmount: string) => void; onReturn: (note: string) => void; onForceReturn: (note: string) => void; onResubmit: (note: string) => void; onWithdraw: (note: string) => void; onVoid: (note: string) => void; onDeleteReturned: () => void; onArchiveNote: (noticeType: "correction" | "void", note: string) => Promise<boolean>; onEditDraft: () => void }) {
   const [nextReviewers, setNextReviewers] = useState<Reviewer[]>([]);
   const [nextReviewerEmail, setNextReviewerEmail] = useState("");
   const [suggestedAmount, setSuggestedAmount] = useState("");
@@ -2033,7 +2047,7 @@ function DetailSheet({ approval, events, open, loading, error, currentEmail, isA
   const [lifecycleNote, setLifecycleNote] = useState("");
   const [archiveNoticeType, setArchiveNoticeType] = useState<"correction" | "void">("correction");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
-  const needsNextReviewer = approval?.step === "技术顾问";
+  const needsNextReviewer = approval?.step === "技术顾问" && !(["技术审核","采购审核"].includes(approval?.type||""));
   const isLaborRecommendation = approval?.type === "劳务报酬" && approval.step === "项目负责人";
   const isFinanceApproval = approval?.type === "劳务报酬" && approval.step === "经费负责人";
   const isPurchaseConfirmation = approval?.type === "采购审核" && approval.step === "统一采购";
@@ -2041,7 +2055,7 @@ function DetailSheet({ approval, events, open, loading, error, currentEmail, isA
   const isRequester = Boolean(approval && currentEmail && approval.requesterEmail?.toLowerCase() === currentEmail.toLowerCase());
   const purchaseApprovalId = approval?.id || "";
   const purchaseRequesterEmail = approval?.requesterEmail || "";
-  const purchaseOwnerEmail = approval?.currentReviewerEmail || currentEmail || "";
+  const purchaseOwnerEmail = isAdmin ? currentEmail || "" : approval?.currentReviewerEmail || currentEmail || "";
   const purchaseInitialReviewerEmail = typeof approval?.payload?.initialReviewerEmail === "string" ? approval.payload.initialReviewerEmail : "";
   const purchaseSuggestedEmail = typeof approval?.payload?.suggestedPurchaserEmail === "string" ? approval.payload.suggestedPurchaserEmail : typeof approval?.payload?.purchaserEmail === "string" ? approval.payload.purchaserEmail : "";
   useEffect(() => {
@@ -2060,7 +2074,7 @@ function DetailSheet({ approval, events, open, loading, error, currentEmail, isA
           approval?.requesterEmail?.trim().toLowerCase(),
           ...(Array.isArray(approval?.payload?.developers) ? approval.payload.developers.flatMap((developer) => developer && typeof developer === "object" && !Array.isArray(developer) && typeof (developer as { email?: unknown }).email === "string" ? [(developer as { email: string }).email.trim().toLowerCase()] : []) : []),
         ].filter((email): email is string => Boolean(email)));
-        const eligible = (data.reviewers ?? []).filter((reviewer) => reviewer.ndaCompleted && reviewer.permissions.includes("project_owner") && !excluded.has(reviewer.email.trim().toLowerCase()));
+        const eligible = (data.reviewers ?? []).filter((reviewer) => reviewer.ndaCompleted && (reviewer.isAdmin || reviewer.permissions.includes("project_owner")) && ((isAdmin && reviewer.isAdmin) || !excluded.has(reviewer.email.trim().toLowerCase())));
         if (!cancelled) {
           setNextReviewers(eligible);
           setNextReviewerEmail((current) => eligible.some((reviewer) => reviewer.email === current) ? current : eligible[0]?.email ?? "");
@@ -2068,7 +2082,7 @@ function DetailSheet({ approval, events, open, loading, error, currentEmail, isA
       })
       .catch((error: unknown) => { if (!cancelled) toast.error("下一位审核人加载失败", { description: error instanceof Error ? error.message : "请稍后重试" }); });
     return () => { cancelled = true; };
-  }, [open, needsNextReviewer, currentEmail, approval]);
+  }, [open, needsNextReviewer, currentEmail, approval, isAdmin]);
   useEffect(() => {
     setSuggestedAmount("");
     setCompensationBasis("");
@@ -2129,7 +2143,8 @@ function DetailSheet({ approval, events, open, loading, error, currentEmail, isA
   const isReturned = approval.status === "已退回";
   const isWithdrawn = approval.status === "已撤回";
   const isVoided = approval.status === "已作废";
-  const isAssigned = Boolean(currentEmail && (approval.type === "流转审批" ? circulationPendingForEmail(approval.payload ?? {}, approval.step, currentEmail) : approval.currentReviewerEmail?.toLowerCase() === currentEmail.toLowerCase()));
+  const administratorReview = (!(["技术审核", "采购审核"].includes(approval.type) || approval.payload?.technicalWeekly === true) && administratorReviewAllowed(approval.type, approval.step, approval.status, Boolean(isAdmin)));
+  const isAssigned = administratorReview || Boolean(currentEmail && (approval.type === "流转审批" ? circulationPendingForEmail(approval.payload ?? {}, approval.step, currentEmail) : technicalPendingForEmail(approval.payload ?? {},approval.step,currentEmail) || approval.currentReviewerEmail?.toLowerCase() === currentEmail.toLowerCase()));
   const ndaPayload = approval.type === "保密协议" ? approval.payload : undefined;
   const ndaAgreementKind = confidentialityAgreementKindFromPayload(ndaPayload) || "member";
   const ndaAutoArchived = ndaPayload?.autoArchived === true;
@@ -2170,6 +2185,7 @@ function DetailSheet({ approval, events, open, loading, error, currentEmail, isA
         <div className="detail-record-meta"><div><span>申请人</span><strong>{approval.requester}</strong><small>{approval.requesterEmail || "未记录账户"}</small></div><div><span>创建时间</span><strong>{approval.createdAt}</strong><small>最后更新：{approval.updatedAt}</small></div><div><span>实名签署人</span><strong>{approval.signers.length ? approval.signers.join("、") : "尚无"}</strong><small>实名邮箱与精确时间见审批轨迹</small></div>{approval.archiveHash && <div className="detail-record-hashes"><span>脱敏归档记录 SHA-256 · Schema v{approval.archiveSchemaVersion || 1}</span><code>{approval.archiveHash}</code>{approval.terminalRevisionNo && <><span>终局材料版本 · 第 {approval.terminalRevisionNo} 版</span>{approval.terminalRevisionHash && <code>{approval.terminalRevisionHash}</code>}{approval.terminalStateHash && <><span>终局材料 SHA-256</span><code>{approval.terminalStateHash}</code></>}</>}{approval.archiveContentHash && <><span>归档文件 SHA-256</span><code>{approval.archiveContentHash}</code></>}{approval.evidenceRecordHash && <><span>受限原始证据记录 SHA-256</span><code>{approval.evidenceRecordHash}</code></>}</div>}</div>
         {approval.currentReviewerName && <div className="detail-assignee"><span>当前处理人</span><strong>{approval.currentReviewerName}</strong>{approval.currentReviewerEmail && <small>{approval.currentReviewerEmail}</small>}</div>}
         <div className="detail-summary">{approval.summary}</div>
+        {administratorReview && <p className="detail-readonly-note">您可以系统管理员身份审批，审批轨迹将记录您本人。</p>}
         {approval.amount && <div className="detail-amount"><span>{approval.type === "劳务报酬" ? "当前劳务报酬金额" : "预计金额"}</span><strong>{approval.amount}</strong></div>}
         {approval.type === "采购审核" && procurementPayload && <div className="detail-section"><div className="detail-section-title"><PackageCheck className="size-4" />采购明细</div><div className="detail-procurement-grid"><div><span>物品 / 规格</span><strong>{String(procurementPayload.itemSpec || "未填写")}</strong></div><div><span>数量</span><strong>{String(procurementPayload.quantity || "未填写")}</strong></div><div><span>{procurementPayload.purchaserEmail ? "最终指定采购人" : "建议采购人"}</span><strong>{String(procurementPayload.purchaserName || procurementPayload.suggestedPurchaserName || "未建议")}</strong></div><div><span>供应商 / 链接</span><strong>{String(procurementPayload.supplier || procurementPayload.purchaseLink || "未填写")}</strong></div>{(procurementPayload.actualAmount !== undefined || approval.actualAmount !== undefined) && <div><span>实际采购金额</span><strong>¥ {numericAmount(procurementPayload.actualAmount ?? approval.actualAmount).toLocaleString("zh-CN")}</strong></div>}{(typeof procurementPayload.purchaseNote === "string" || approval.purchaseNote) && <div><span>实际采购说明</span><strong>{typeof procurementPayload.purchaseNote === "string" ? procurementPayload.purchaseNote : approval.purchaseNote}</strong></div>}</div></div>}
         {approval.type === "技术审核" && technicalDevelopers.length > 0 && <div className="detail-section technical-contribution-detail"><div className="detail-section-title"><ClipboardCheck className="size-4" />技术工时、贡献与实名确认</div><div className="technical-hours-summary"><span>总工作时间</span><strong>{Number(technicalPayload?.totalWorkHours || 0).toFixed(2)} 小时</strong></div><div className="technical-contribution-list developer-confirmation-list">{technicalDevelopers.map((developer, index) => { const confirmation = developerConfirmations.find((item) => (typeof developer.memberId === "string" && developer.memberId && item.memberId === developer.memberId) || (typeof developer.email === "string" && typeof item.email === "string" && item.email.toLowerCase() === developer.email.toLowerCase())); const confirmedAt = typeof confirmation?.confirmedAt === "string" ? confirmation.confirmedAt : ""; return <div key={`${String(developer.memberId || developer.email || developer.name)}-${index}`}><span>{typeof developer.name === "string" ? developer.name : "未命名成员"}</span><small>{typeof developer.work === "string" ? developer.work : "未填写实际工作"}</small><b>{Number(developer.ratio || 0).toFixed(2)}%</b><em className={confirmedAt ? "confirmed" : "pending"}>{confirmedAt ? `已实名确认 · ${formatChatTimestamp(confirmedAt)}` : approval.status === "草稿" ? "提交后待本人确认" : "待本人实名确认"}</em></div>; })}</div></div>}
@@ -2182,16 +2198,35 @@ function DetailSheet({ approval, events, open, loading, error, currentEmail, isA
         {needsPurchaserAssignment && canAct && <div className="transfer-box purchase-assignment-box"><div className="transfer-title"><PackageCheck className="size-4" />项目负责人指定采购成员</div><NativeSelect value={selectedPurchaserEmail} onChange={(event) => setSelectedPurchaserEmail(event.target.value)} disabled={purchasePeopleLoading || purchasePeople.length === 0} className="reviewer-select"><NativeSelectOption value="">{purchasePeopleLoading ? "正在加载已激活成员…" : purchasePeople.length ? "请选择采购成员" : "暂无可独立执行的采购成员"}</NativeSelectOption>{purchasePeople.map((person) => <NativeSelectOption key={person.id || person.email} value={person.email}>{person.fullName} · {person.email}</NativeSelectOption>)}</NativeSelect><p>最终采购人必须与申请人、技术顾问和项目负责人使用不同实名账号；通过后由其本人确认采购结果。</p></div>}
         {isLaborRecommendation && canAct && <div className="transfer-box labor-recommendation-box"><div className="transfer-title"><CircleDollarSign className="size-4" />项目负责人建议劳务报酬</div><Field label="建议金额（元）" required><Input value={suggestedAmount} onChange={(event) => setSuggestedAmount(event.target.value)} type="number" min="0.01" step="0.01" placeholder="请输入建议金额" /></Field><Field label="金额依据（至少 10 个字）" required><Textarea value={compensationBasis} onChange={(event) => setCompensationBasis(event.target.value)} rows={3} placeholder="结合技术贡献、其他工作、交付质量和协作情况说明建议金额依据。" /></Field><div className="unit-rate-preview"><span>系统自动折算单价</span><strong>{suggestedUnitRate > 0 ? `¥ ${suggestedUnitRate.toFixed(2)} / 核算小时` : "填写建议金额后显示"}</strong></div><p>折算单价仅用于复核金额依据，不代表预设或固定劳务单价。提交后申请会转交经费负责人。</p></div>}
         {isFinanceApproval && canAct && <div className="transfer-box labor-recommendation-box"><div className="transfer-title"><CircleDollarSign className="size-4" />经费负责人最终审核</div>{suggestedAmountValue > 0 && <div className="unit-rate-preview"><span>项目负责人建议金额</span><strong>¥ {suggestedAmountValue.toLocaleString("zh-CN")}</strong></div>}<Field label="最终审核金额（元）" required><Input value={finalAmount} onChange={(event) => setFinalAmount(event.target.value)} type="number" min="0.01" step="0.01" placeholder="请输入最终审核金额" /></Field><Field label={finalAmountDiffers ? "金额调整意见（必填）" : "经费审核意见（可选）"}><Textarea value={financeNote} onChange={(event) => setFinanceNote(event.target.value)} rows={3} placeholder={finalAmountDiffers ? "最终金额与建议金额不同，请说明调整原因。" : "可补充经费审核意见。"} /></Field>{finalAmountDiffers && !financeNote.trim() && <div className="amount-difference-warning"><AlertTriangle className="size-4" />最终金额与建议金额不同，必须填写调整意见。</div>}<p>最终金额和审核意见会随劳务报酬申请一并归档。</p></div>}
-        {isPurchaseConfirmation && canAct && <div className="transfer-box purchase-confirmation-box"><div className="transfer-title"><PackageCheck className="size-4" />指定采购成员确认</div><Field label="实际采购说明（至少 5 个字）" required><Textarea value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} rows={3} placeholder="说明实际购买内容、供应商及采购完成情况。" /></Field><Field label="实际采购金额（元）" required><Input value={actualAmount} onChange={(event) => setActualAmount(event.target.value)} type="number" min="0" max={approvedPurchaseAmount} step="0.01" placeholder={`不得高于批准金额 ¥ ${approvedPurchaseAmount.toLocaleString("zh-CN")}`} /></Field>{purchaseAmountTooHigh && <div className="amount-difference-warning"><AlertTriangle className="size-4" />实际金额超过批准金额，不能直接归档；请填写退回意见并重新走审批。</div>}<p>实际金额可为 0，但不得高于批准预计金额。仅指定采购成员可确认；确认后本申请正式归档。</p></div>}
-        {approval.type === "流转审批" && <div className="detail-section"><div className="detail-section-title"><GitBranch className="size-4" />流转与审批</div><p className="circulation-content">{String(approval.payload?.circulationContent || approval.summary)}</p>{[{ key: "circulationRecipients", decisions: "circulationConfirmations", title: "流转对象", done: "已确认" }, { key: "circulationApprovers", decisions: "circulationApprovals", title: "审批人", done: "已同意" }].map((group) => <div className="circulation-progress" key={group.key}><strong>{group.title}</strong>{circulationPeople(approval.payload?.[group.key]).length ? circulationPeople(approval.payload?.[group.key]).map((person) => { const done = circulationPeople(approval.payload?.[group.decisions]).some((decision) => decision.memberId === person.memberId && decision.accountUserId === person.accountUserId); return <div key={person.memberId}><span>{person.name}</span><Badge variant="outline">{done ? group.done : group.key === "circulationApprovers" && approval.step === "流转确认" ? "等待流转完成" : "待处理"}</Badge></div>; }) : <p>未选择，跳过此环节</p>}</div>)}</div>}
-        <div className="detail-section archive-actions-section"><div className="detail-section-title"><Archive className="size-4" />PDF 与飞书归档</div><p className="archive-actions-help">{approval.archiveIntegrityError || (approval.status === "已归档" ? "系统已生成包含审批正文、签署证据、完整流转记录和校验值的正式 PDF，并按“年份 / 月份 / 文件类型”自动保存到公司飞书云空间。" : "可随时下载当前审批版本的 PDF；完成全部审核并归档后，系统会生成带完整校验值的正式 PDF，并自动保存到公司飞书云空间。")}</p>{approval.archiveIntegrityError && <div className="amount-difference-warning" role="alert"><AlertTriangle className="size-4" />正文和签署记录未被隐藏；管理员核验完成后即可恢复 PDF。</div>}<div className="detail-footer-actions">{approval.archiveIntegrityError ? <Button type="button" variant="outline" className="print-approval-button" disabled><AlertTriangle className="size-4" />正式 PDF 暂不可用</Button> : <Button asChild variant="outline" className="print-approval-button"><a href={`/api/approvals/${encodeURIComponent(approval.id)}/pdf`}><Download className="size-4" />{approval.status === "已归档" ? "下载正式 PDF" : "下载当前版本 PDF"}</a></Button>}{approval.status === "已归档" && !approval.archiveIntegrityError && <span className={`archive-upload-status ${approval.feishuPdfArchive?.status || "pending"}`}>{approval.feishuPdfArchive?.status === "uploaded" ? "飞书已保存" : approval.feishuPdfArchive?.status === "failed" ? "飞书保存待重试" : "正在保存到飞书"}</span>}</div>{approval.feishuPdfArchive?.fileName && <small className="archive-file-name">{approval.feishuPdfArchive.fileName}</small>}</div>
+        {approval.type === "采购审核" && ["财务审核","负责人终审","报销待完成"].includes(approval.step) && <div className="detail-section"><p>财务审核 → 负责人审核 → 全部报销完成后归档。请在人员工作台逐笔关联本申请，登记真实到账金额、日期和凭证；未报完或有问题时不能归档。</p><a href="/people-workbench">前往人员工作台核对报销账单</a></div>}{isPurchaseConfirmation && canAct && <div className="transfer-box purchase-confirmation-box"><div className="transfer-title"><PackageCheck className="size-4" />指定采购成员确认</div><Field label="实际采购说明（至少 5 个字）" required><Textarea value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} rows={3} placeholder="说明实际购买内容、供应商及采购完成情况。" /></Field><Field label="实际采购金额（元）" required><Input value={actualAmount} onChange={(event) => setActualAmount(event.target.value)} type="number" min="0" max={approvedPurchaseAmount} step="0.01" placeholder={`不得高于批准金额 ¥ ${approvedPurchaseAmount.toLocaleString("zh-CN")}`} /></Field>{purchaseAmountTooHigh && <div className="amount-difference-warning"><AlertTriangle className="size-4" />实际金额超过批准金额，不能直接归档；请填写退回意见并重新走审批。</div>}<p>实际金额可为 0，但不得高于批准预计金额。仅指定采购成员可确认；之后先交财务审核，再交负责人审核，全部报销完成后归档。</p></div>}
+        {approval.type === "流转审批" && <div className="detail-section"><div className="detail-section-title"><GitBranch className="size-4" />流转与审批</div><p className="circulation-content">{String(approval.payload?.circulationContent || approval.summary)}</p>{[{ key: "circulationRecipients", decisions: "circulationConfirmations", title: "流转对象", done: "已确认" }, { key: "circulationApprovers", decisions: "circulationApprovals", title: "审批人", done: "已同意" }].map((group) => <div className="circulation-progress" key={group.key}><strong>{group.title}</strong>{circulationPeople(approval.payload?.[group.key]).length ? circulationPeople(approval.payload?.[group.key]).map((person) => { const done = circulationPeople(approval.payload?.[group.decisions]).some((decision) => decision.memberId === person.memberId && decision.accountUserId === person.accountUserId); return <div key={person.memberId}><span>{person.name}</span><Badge variant="outline">{done ? group.done : group.key === "circulationApprovers" && approval.status === "已归档" && administratorReviews(approval.payload ?? {}).some((review) => review.step === "指定审批") ? "管理员已批准" : group.key === "circulationApprovers" && approval.step === "流转确认" ? "等待流转完成" : "待处理"}</Badge></div>; }) : <p>未选择，跳过此环节</p>}</div>)}</div>}
+        <div className="detail-section archive-actions-section">
+          <div className="detail-section-title"><Archive className="size-4" />PDF 下载与飞书存档</div>
+          <p className="archive-actions-help">{approval.archiveIntegrityError || (approval.status === "已归档"
+            ? "审批材料已归档。点击“下载正式 PDF”可获取包含正文、签署证据、流转记录及校验值的文件，文件会保存到您的浏览器下载目录。"
+            : "可下载当前审批版本的 PDF；完成全部审核并归档后，可在此下载带完整校验值的正式 PDF。")}</p>
+          {approval.status === "已归档" && !approval.archiveIntegrityError && <p className="archive-actions-help">{approval.feishuPdfArchive?.status === "uploaded"
+            ? "飞书存档已保存，目录为“OriginMind OA 归档 / 年份 / 月份 / 文件类型”。"
+            : approval.feishuPdfArchive?.status === "pending" ? "正在同步到飞书，请稍后刷新查看保存结果。"
+              : approval.feishuPdfArchive?.status === "failed" ? "飞书保存失败，管理员可查看同步状态；正式 PDF 仍可在此下载。"
+                : "当前未启用自动同步飞书。审批材料保存在 OA 中，请在此下载正式 PDF。"} </p>}
+          {approval.archiveIntegrityError && <div className="amount-difference-warning" role="alert"><AlertTriangle className="size-4" />正文和签署记录未被隐藏；管理员核验完成后即可恢复 PDF。</div>}
+          <div className="detail-footer-actions">
+            {approval.archiveIntegrityError ? <Button type="button" variant="outline" className="print-approval-button" disabled><AlertTriangle className="size-4" />正式 PDF 暂不可用</Button>
+              : <Button asChild variant="outline" className="print-approval-button"><a href={`/api/approvals/${encodeURIComponent(approval.id)}/pdf`}><Download className="size-4" />{approval.status === "已归档" ? "下载正式 PDF" : "下载当前版本 PDF"}</a></Button>}
+            {approval.status === "已归档" && !approval.archiveIntegrityError && <span className={`archive-upload-status ${approval.feishuPdfArchive?.status || "disabled"}`}>{approval.feishuPdfArchive?.status === "uploaded" ? "飞书已保存"
+              : approval.feishuPdfArchive?.status === "failed" ? "飞书保存失败"
+                : approval.feishuPdfArchive?.status === "pending" ? "正在保存到飞书" : "OA 已归档 · 可下载 PDF"}</span>}
+          </div>
+          {approval.feishuPdfArchive?.status === "uploaded" && approval.feishuPdfArchive.fileName && <small className="archive-file-name">飞书存档文件：{approval.feishuPdfArchive.fileName}</small>}
+        </div>
         {canAddArchiveNote && <div className="detail-section applicant-lifecycle-panel archive-notice-panel"><div className="detail-section-title"><FilePenLine className="size-4" />追加归档说明</div><p>已归档记录不能直接作废或覆盖。这里仅追加“更正说明”或“废止说明”，原正文、签字、版本和历史归档文件保持不变。</p><NativeSelect value={archiveNoticeType} onChange={(event) => setArchiveNoticeType(event.target.value as "correction" | "void")}><NativeSelectOption value="correction">更正说明</NativeSelectOption><NativeSelectOption value="void">废止说明</NativeSelectOption></NativeSelect><Textarea value={lifecycleNote} onChange={(event) => setLifecycleNote(event.target.value)} rows={4} placeholder="填写至少 10 个字，说明需要更正或废止的内容、原因及处理依据" /><Button type="button" variant="outline" disabled={lifecycleNote.trim().length < 10} onClick={() => { const submittedNote = lifecycleNote.trim(); void onArchiveNote(archiveNoticeType, submittedNote).then((saved) => { if (saved) setLifecycleNote(""); }); }}><FilePenLine className="size-4" />追加{archiveNoticeType === "correction" ? "更正" : "废止"}说明</Button></div>}
         {canWithdraw && <div className="detail-section applicant-lifecycle-panel"><div className="detail-section-title"><RotateCcw className="size-4" />申请人撤回</div><p>撤回后记录和已发生的流转轨迹都会保留；你可以修改后重新提交。劳务申请的月份和成果占用在作废前继续保留。</p><Textarea value={lifecycleNote} onChange={(event) => setLifecycleNote(event.target.value)} rows={3} placeholder="填写至少 2 个字的撤回原因" /><Button type="button" variant="outline" className="return-button" disabled={lifecycleNote.trim().length < 2} onClick={() => onWithdraw(lifecycleNote.trim())}><RotateCcw className="size-4" />撤回申请</Button></div>}
         {canVoid && <div className="detail-section applicant-lifecycle-panel void-panel"><div className="detail-section-title"><Trash2 className="size-4" />终止并作废</div><p>作废后记录仍会保留，但不再流转，也不能恢复或直接重新提交。劳务占用会在作废成功后释放。</p><Textarea value={lifecycleNote} onChange={(event) => setLifecycleNote(event.target.value)} rows={3} placeholder="填写至少 2 个字的作废原因" /><label className="void-confirm"><input type="checkbox" checked={voidConfirmed} onChange={(event) => setVoidConfirmed(event.target.checked)} /><span>我确认终止这份申请，并保留其历史记录。</span></label><Button type="button" className="danger-button" disabled={!voidConfirmed || lifecycleNote.trim().length < 2} onClick={() => onVoid(lifecycleNote.trim())}><Trash2 className="size-4" />确认作废</Button></div>}
         {isAdmin && !isDone && !isDraft && !isReturned && !isWithdrawn && !isVoided && !canAct && <div className="detail-section detail-policy"><div className="detail-section-title"><AlertTriangle className="size-4" />异常流程恢复</div><p>{ndaRequiresApplicantResign ? "当前版成员协议不能沿旧审核节点继续；管理员不会代签，只能强制退回申请人重新手写签署并直接归档。" : "仅在当前处理人已失效或流程无法继续时使用。管理员不会代替任何审核人签字；操作只会把材料退回申请人并完整留痕。"}</p><Textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} rows={3} placeholder="填写至少 10 个字的异常原因" /><Button type="button" variant="outline" className="return-button" disabled={actionNote.trim().length < 10} onClick={() => onForceReturn(actionNote.trim())}><RotateCcw className="size-4" />管理员强制退回</Button></div>}
       </div>
       <SheetFooter className="detail-footer">
-        {isDraft ? <><Button variant="outline" onClick={() => onOpenChange(false)}>关闭</Button><Button className="primary-button" onClick={onEditDraft}><Pencil className="size-4" />继续编辑草稿</Button></> : (isReturned || isWithdrawn) ? isRequester ? <>{approval.type !== "保密协议" && <Textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} rows={3} placeholder="填写本次补充或修改说明" />}<div className="detail-footer-actions"><Button variant="outline" onClick={onEditDraft}><Pencil className="size-4" />{approval.type === "保密协议" ? "重新签名并提交" : "修改材料"}</Button>{approval.type !== "保密协议" && <Button className="primary-button" disabled={actionNote.trim().length < 2} onClick={() => onResubmit(actionNote.trim())}><Send className="size-4" />修改后重新提交</Button>}</div></> : <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>关闭详情</Button> : canAct ? <><Textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} rows={2} placeholder="审核意见（可选，未填写时默认：请补充或修改后重新提交）" /><div className="detail-footer-actions"><Button variant="outline" className="return-button" onClick={() => onReturn(actionNote.trim() || "请补充或修改后重新提交") }><RotateCcw className="size-4" />一键退回</Button><Button className="primary-button" disabled={Boolean((needsNextReviewer && !nextReviewerEmail) || (needsPurchaserAssignment && !selectedPurchaserEmail) || (isLaborRecommendation && (!suggestedAmount.trim() || compensationBasis.trim().length < 10)) || (isFinanceApproval && (!finalAmount.trim() || (finalAmountDiffers && !financeNote.trim()))) || (isPurchaseConfirmation && (purchaseNote.trim().length < 5 || !actualAmount.trim() || actualPurchaseAmount < 0 || purchaseAmountTooHigh)))} onClick={() => isPurchaseConfirmation ? onConfirmPurchase(purchaseNote.trim(), actualAmount.trim()) : sendApprove()}><BadgeCheck className="size-4" />{approval.type === "流转审批" ? approval.step === "流转确认" ? "确认已处理" : "同意审批" : approval.step === "开发人确认" ? "确认本人工作与占比" : needsNextReviewer ? "通过并转交" : isPurchaseConfirmation ? "确认采购并归档" : approval.type === "保密协议" ? ndaAgreementKind === "project_owner" ? "确认并归档" : "审核并归档" : approval.type === "劳务报酬" ? approval.step === "项目负责人" ? "通过并提交建议" : "审核并归档" : approval.type === "采购审核" ? "通过并进入统一采购" : "通过并归档"}</Button></div></> : <><div className="detail-readonly-note">{isVoided ? "该申请已作废，记录仅供查阅，不再继续流转。" : approval.status === "已归档" ? "该申请已归档；原记录不可覆盖，申请人可在详情中追加更正或废止说明。" : "当前节点由其他成员处理，你可以查看审批详情和流转记录。"}</div><Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>关闭详情</Button></>}
+        {isDraft ? <><Button variant="outline" onClick={() => onOpenChange(false)}>关闭</Button><Button className="primary-button" onClick={onEditDraft}><Pencil className="size-4" />继续编辑草稿</Button></> : (isReturned || isWithdrawn) ? isRequester ? <>{approval.type !== "保密协议" && <Textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} rows={3} placeholder="填写本次补充或修改说明" />}<div className="detail-footer-actions">{isReturned && <Button variant="outline" className="return-button" onClick={onDeleteReturned}><Trash2 className="size-4" />删除退回文件</Button>}<Button variant="outline" onClick={onEditDraft}><Pencil className="size-4" />{approval.type === "保密协议" ? "重新签名并提交" : "修改材料"}</Button>{approval.type !== "保密协议" && <Button className="primary-button" disabled={actionNote.trim().length < 2} onClick={() => onResubmit(actionNote.trim())}><Send className="size-4" />修改后重新提交</Button>}</div></> : <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>关闭详情</Button> : canAct ? <><Textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} rows={2} placeholder="审核意见（可选，未填写时默认：请补充或修改后重新提交）" /><div className="detail-footer-actions"><Button variant="outline" className="return-button" onClick={() => onReturn(actionNote.trim() || "请补充或修改后重新提交") }><RotateCcw className="size-4" />一键退回</Button><Button className="primary-button" disabled={Boolean((needsNextReviewer && !nextReviewerEmail) || (needsPurchaserAssignment && !selectedPurchaserEmail) || (isLaborRecommendation && (!suggestedAmount.trim() || compensationBasis.trim().length < 10)) || (isFinanceApproval && (!finalAmount.trim() || (finalAmountDiffers && !financeNote.trim()))) || (isPurchaseConfirmation && (purchaseNote.trim().length < 5 || !actualAmount.trim() || actualPurchaseAmount < 0 || purchaseAmountTooHigh)))} onClick={() => isPurchaseConfirmation ? onConfirmPurchase(purchaseNote.trim(), actualAmount.trim()) : sendApprove()}><BadgeCheck className="size-4" />{approval.type === "流转审批" ? approval.step === "流转确认" ? "确认已处理" : "同意审批" : approval.step === "开发人确认" ? "确认本人工作与占比" : ["技术审核","采购审核"].includes(approval.type) && approval.step === "技术顾问" ? "签字通过，交负责人" : approval.type === "采购审核" && ["财务审核","负责人终审","报销待完成"].includes(approval.step) ? approval.step === "报销待完成" ? "全部报销完成，核实归档" : "审核通过并流转" : needsNextReviewer ? "通过并转交" : isPurchaseConfirmation ? "确认采购，转财务审核" : approval.type === "保密协议" ? ndaAgreementKind === "project_owner" ? "确认并归档" : "审核并归档" : approval.type === "劳务报酬" ? approval.step === "项目负责人" ? "通过并提交建议" : "审核并归档" : approval.type === "采购审核" ? "通过并进入统一采购" : "通过并归档"}</Button></div></> : <><div className="detail-readonly-note">{isVoided ? "该申请已作废，记录仅供查阅，不再继续流转。" : approval.status === "已归档" ? "该申请已归档；原记录不可覆盖，申请人可在详情中追加更正或废止说明。" : "当前节点由其他成员处理，你可以查看审批详情和流转记录。"}</div><Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>关闭详情</Button></>}
       </SheetFooter>
     </SheetContent>
   </Sheet>;
@@ -2211,9 +2246,9 @@ function RulesView() {
 export default function Home() {
   const [mobileDirect, setMobileDirect] = useState(false);
   useEffect(() => { const query = window.matchMedia('(max-width: 960px)'); const update = () => setMobileDirect(query.matches); update(); query.addEventListener('change', update); return () => query.removeEventListener('change', update); }, []);
-  const [activeView, setActiveView] = useState<ViewKey>("chat");
+  const [activeView, setActiveView] = useState<ViewKey>("project");
   const [chatCreateRequest, setChatCreateRequest] = useState(0);
-  const [primaryView, setPrimaryView] = useState<OaPrimaryView>("model");
+  const [primaryView, setPrimaryView] = useState<OaPrimaryView>("project");
   const [knowledgeTab, setKnowledgeTab] = useState<KnowledgeTab>("ask");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   useEffect(() => { try { setSidebarCollapsed(localStorage.getItem("oa.sidebar.collapsed") === "true"); } catch { /* optional preference */ } }, []);
@@ -2228,7 +2263,7 @@ export default function Home() {
   const [showMineOnly, setShowMineOnly] = useState(false);
   const [metricPanel, setMetricPanel] = useState<MetricPanel>(null);
   const [peopleCount, setPeopleCount] = useState<number | null>(null);
-  const [supplementalPendingCount, setSupplementalPendingCount] = useState(0);
+  const [supplementalPendingCount, setSupplementalPendingCount] = useState<number | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [requestDialogEpoch, setRequestDialogEpoch] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -2256,6 +2291,11 @@ export default function Home() {
   const needsNda = Boolean(session?.registered && (session.needsNda === true || session.ndaCompleted === false));
   const mainAccessReady = Boolean(session?.registered && session.status !== "pending" && !needsNda);
   useEffect(() => {
+    if (!mainAccessReady) return;
+    const target = new URLSearchParams(window.location.search).get("approval");
+    if (target && /^[A-Za-z0-9._-]{1,128}$/.test(target)) { setActiveView("requests"); setSelectedId(target); }
+  }, [mainAccessReady]);
+  useEffect(() => {
     fetch("/api/session", { headers: { accept: "application/json" } })
       .then((response) => response.json() as Promise<SessionInfo>)
       .then(setSession)
@@ -2275,7 +2315,7 @@ export default function Home() {
       setActiveView("profile");
       toast.info("GitHub 已经绑定", { description: "无需重复操作。" });
     } else if (githubStatus === "signed-in") {
-      setActiveView("chat"); setPrimaryView("model");
+      setActiveView("project"); setPrimaryView("project");
       setShowMineOnly(false);
       setMobileNavOpen(false);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -2314,7 +2354,7 @@ export default function Home() {
       setActiveView("profile");
       toast.info("飞书已经绑定", { description: "无需重复操作。" });
     } else if (feishuStatus === "signed-in") {
-      setActiveView("chat"); setPrimaryView("model");
+      setActiveView("project"); setPrimaryView("project");
       setShowMineOnly(false);
       setMobileNavOpen(false);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -2360,38 +2400,18 @@ export default function Home() {
         }
       })
       .catch((error: unknown) => {
-        if (!cancelled && firstLoad) { setApprovals([]); setDataReady(true); toast.error("系统数据暂不可用", { description: error instanceof Error ? error.message : "请联系管理员" }); }
+        if (!cancelled) setDataReady(false);
+        if (!cancelled && firstLoad) { setApprovals([]); toast.error("系统数据暂不可用", { description: error instanceof Error ? error.message : "请联系管理员" }); }
       })
       .finally(() => { firstLoad = false; });
     void loadApprovals();
-    const intervalId = window.setInterval(loadApprovals, 30_000);
-    return () => { cancelled = true; window.clearInterval(intervalId); };
+    const refresh = () => { if (document.visibilityState !== "hidden") void loadApprovals(); };
+    const intervalId = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("oa-pending-refresh", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { cancelled = true; window.clearInterval(intervalId); window.removeEventListener("focus", refresh); window.removeEventListener("oa-pending-refresh", refresh); document.removeEventListener("visibilitychange", refresh); };
   }, [mainAccessReady]);
-  useEffect(() => {
-    const currentEmail = session?.user?.email?.trim().toLowerCase();
-    const canReviewKnowledge = Boolean(session?.canReviewKnowledge);
-    if (!mainAccessReady || !currentEmail) return;
-    let cancelled = false;
-    const loadUnifiedPending = async () => {
-      try {
-        const [workResponse, knowledgeResponse] = await Promise.all([
-          fetch("/api/work-items", { headers: { accept: "application/json" }, credentials: "same-origin", cache: "no-store" }),
-          canReviewKnowledge ? fetch("/api/knowledge?scope=review", { headers: { accept: "application/json" }, credentials: "same-origin", cache: "no-store" }) : Promise.resolve(null),
-        ]);
-        const workData = await workResponse.json() as { items?: Array<{ assigneeEmail: string; status: string }> };
-        const knowledgeData = knowledgeResponse ? await knowledgeResponse.json() as { pendingCount?: number; items?: unknown[] } : {};
-        if (!workResponse.ok || (knowledgeResponse && !knowledgeResponse.ok)) return;
-        const mine = (workData.items ?? []).filter((item) => item.assigneeEmail.trim().toLowerCase() === currentEmail && item.status !== "done" && item.status !== "cancelled").length;
-        const knowledge = canReviewKnowledge ? knowledgeData.pendingCount ?? knowledgeData.items?.length ?? 0 : 0;
-        if (!cancelled) setSupplementalPendingCount(mine + knowledge);
-      } catch {
-        // Preserve the last verified total when a background source is temporarily unavailable.
-      }
-    };
-    void loadUnifiedPending();
-    const intervalId = window.setInterval(loadUnifiedPending, 30_000);
-    return () => { cancelled = true; window.clearInterval(intervalId); };
-  }, [mainAccessReady, session?.canReviewKnowledge, session?.user?.email]);
   useEffect(() => {
     if (!mainAccessReady) return;
     fetch("/api/people?scope=directory", { headers: { accept: "application/json" }, credentials: "same-origin", cache: "no-store" })
@@ -2487,14 +2507,15 @@ export default function Home() {
     return approvals.filter((approval) => {
       if (approval.status !== "待审核" && approval.status !== "审批中") return false;
       if (isStrandedCurrentMemberNda(approval)) return false;
-      return approval.type === "流转审批" ? circulationPendingForEmail(approval.payload ?? {}, approval.step, email) : approval.currentReviewerEmail?.trim().toLowerCase() === email;
+      return (!(["技术审核", "采购审核"].includes(approval.type) || approval.payload?.technicalWeekly === true) && administratorReviewAllowed(approval.type, approval.step, approval.status, Boolean(session?.isAdmin))) || (approval.type === "流转审批" ? circulationPendingForEmail(approval.payload ?? {}, approval.step, email) : technicalPendingForEmail(approval.payload ?? {},approval.step,email) || approval.currentReviewerEmail?.trim().toLowerCase() === email);
     });
-  }, [approvals, session?.user?.email]);
+  }, [approvals, session?.user?.email, session?.isAdmin]);
   const filteredApprovals = useMemo(() => {
     const scopedApprovals = showMineOnly ? myPendingApprovals : approvals;
     return activeFilter === "全部" ? scopedApprovals : scopedApprovals.filter((approval) => approval.type === activeFilter);
   }, [activeFilter, approvals, myPendingApprovals, showMineOnly]);
-  const pendingCount = myPendingApprovals.length + supplementalPendingCount;
+  const returnedApprovals = useMemo(() => myReturnedApprovals(approvals, session?.user?.email || ""), [approvals, session?.user?.email]);
+  const pendingCount = dataReady && supplementalPendingCount !== null ? myPendingApprovals.length + returnedApprovals.length + supplementalPendingCount : "—";
   const currentMonthKey = localMonthKey();
   const monthlyApproved = useMemo(() => approvals.filter((approval) => approval.createdAt.slice(0, 7) === currentMonthKey && (approval.status === "已通过" || approval.status === "已归档")), [approvals, currentMonthKey]);
   const archivedCount = approvals.filter((approval) => approval.status === "已归档").length;
@@ -2578,6 +2599,20 @@ export default function Home() {
       lifecycleLockRef.current = false;
     }
   };
+  const deleteReturnedApproval = async () => {
+    if (!selectedApproval || selectedApproval.status !== "已退回" || lifecycleLockRef.current) return;
+    if (!window.confirm(`删除退回文件“${selectedApproval.title}”？删除后从申请列表移除，原审核记录保留。`)) return;
+    const target = selectedApproval;
+    lifecycleLockRef.current = true;
+    try {
+      const response = await fetch(`/api/approvals/${encodeURIComponent(target.id)}`, { method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "delete_returned", expectedUpdatedAt: target.updatedAt }) });
+      const data = await response.json() as { approval?: Approval; error?: string };
+      if (!response.ok || !data.approval) throw new Error(data.error || "删除失败");
+      setApprovals(current => current.filter(item => item.id !== target.id)); closeApproval(); toast.success("退回文件已删除");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "删除失败"); setDetailReloadKey(current => current + 1); }
+    finally { lifecycleLockRef.current = false; }
+  };
+
   const approveSelected = (nextReviewerEmail?: string, suggestedAmount?: string, finalAmount?: string, financeNote?: string, compensationBasis?: string, purchaserEmail?: string, circulationNote?: string) => {
     if (!selectedApproval) return;
     if (selectedApproval.type === "劳务报酬" && selectedApproval.step === "项目负责人") {
@@ -2598,6 +2633,9 @@ export default function Home() {
       return;
     }
     if (selectedApproval.step === "开发人确认") { void updateSelected("审批中", "开发人确认", "本人实名确认已记录", "confirm_developer"); return; }
+    if (["技术审核","采购审核"].includes(selectedApproval.type) && selectedApproval.step === "技术顾问" || selectedApproval.type === "采购审核" && ["财务审核","负责人终审","报销待完成"].includes(selectedApproval.step)) {
+      void updateSelected("审批中",selectedApproval.step,"审核结果已保存，已按既定流程更新","approve");return;
+    }
     if (selectedApproval.step === "技术顾问") {
       if (!nextReviewerEmail) { toast.info("请选择下一位项目负责人", { description: "审核通过后必须指定下一位审核人，或点击退回补充。" }); return; }
       void updateSelected("审批中", "项目负责人", "技术顾问审核已通过，已转交项目负责人", "approve", nextReviewerEmail);
@@ -2620,7 +2658,7 @@ export default function Home() {
     if (!actualAmount.trim() || numericAmount(actualAmount) < 0) { toast.info("请填写正确的实际采购金额"); return; }
     const approvedAmount = numericAmount(selectedApproval?.payload?.amount ?? selectedApproval?.amount);
     if (numericAmount(actualAmount) > approvedAmount + 0.005) { toast.info("实际金额超过批准金额", { description: "请退回补充并重新完成审批。" }); return; }
-    void updateSelected("已归档", "已归档", "指定采购成员已确认实际采购并归档", "confirm_purchase", undefined, undefined, undefined, undefined, undefined, undefined, purchaseNote.trim(), actualAmount);
+    void updateSelected("已归档", "已归档", "采购已确认，已转财务审核", "confirm_purchase", undefined, undefined, undefined, undefined, undefined, undefined, purchaseNote.trim(), actualAmount);
   };
   const returnSelected = (note: string) => updateSelected("已退回", "补充材料", "已退回申请人补充材料", "return", undefined, undefined, undefined, undefined, note);
   const forceReturnSelected = (note: string) => updateSelected("已退回", "补充材料", "异常流程已由管理员退回申请人", "force_return", undefined, undefined, undefined, undefined, note);
@@ -2629,16 +2667,35 @@ export default function Home() {
   const voidSelected = (note: string) => { void applyApplicantAction("void", note); };
   const archiveNoteSelected = (noticeType: "correction" | "void", note: string) => applyApplicantAction("archive_note", note, noticeType);
   const openDraftEditor = () => { if (!selectedApproval) return; const draft = selectedApproval; closeApproval(); setEditingDraft(draft); setRequestDialogEpoch((current) => current + 1); setNewOpen(true); };
-  const openMyPending = () => { setActiveView("todos"); setActiveFilter("全部"); setShowMineOnly(false); setMobileNavOpen(false); };
-  const navigate = (view: ViewKey) => { setActiveView(view); if (view === "project" || view === "todos") setPrimaryView("project"); else if (["dashboard", "requests", "members"].includes(view)) setPrimaryView("dashboard"); else if (view === "library") setPrimaryView("library"); else if (view === "chat") setPrimaryView("model"); setShowMineOnly(false); setMobileNavOpen(false); };
+  const openMyPending = () => { navigate("todos"); setActiveFilter("全部"); window.dispatchEvent(new Event("oa-pending-refresh")); window.scrollTo({ top: 0, behavior: "auto" }); };
+  useEffect(() => {
+    const openFutureStars = () => {
+      if (session?.isAdmin && window.location.hash === "#future-stars") {
+        setActiveView("future-stars"); setPrimaryView("future-stars");
+      }
+    };
+    const followLocation = () => {
+      if (!window.location.hash) { setActiveView("project"); setPrimaryView("project"); }
+      else if (window.location.hash === "#todos") { setActiveView("todos"); setPrimaryView("project"); }
+      else openFutureStars();
+    };
+    if (window.location.hash === "#todos") { setActiveView("todos"); setPrimaryView("project"); } else openFutureStars();
+    window.addEventListener("hashchange", followLocation);
+    window.addEventListener("popstate", followLocation);
+    return () => {
+      window.removeEventListener("hashchange", followLocation);
+      window.removeEventListener("popstate", followLocation);
+    };
+  }, [session?.isAdmin]);
+  const navigate = (view: ViewKey) => { if (view === "future-stars" && !session?.isAdmin) return; window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + (view === "future-stars" ? "#future-stars" : view === "todos" ? "#todos" : "")); setActiveView(view); if (view === "future-stars") setPrimaryView("future-stars"); if (view === "project" || view === "todos") setPrimaryView("project"); else if (["dashboard", "requests", "members"].includes(view)) setPrimaryView("dashboard"); else if (view === "library") setPrimaryView("library"); else if (view === "chat") setPrimaryView("model"); setShowMineOnly(false); setMobileNavOpen(false); };
   const openMetricApproval = (id: string) => { setMetricPanel(null); openApproval(id); };
   const isModelHeader = activeView === "chat" || (activeView === "knowledge" && knowledgeTab === "ask");
-  const secondaryTitle = activeView === "library" ? "资料库" : activeView === "home" ? "入组导览" : activeView === "chat" ? "消息" : activeView === "mail" ? "邮箱" : activeView === "dashboard" ? "审批工作台" : activeView === "todos" ? "统一待办" : activeView === "project" ? "工作台" : activeView === "requests" ? showMineOnly ? "待我审批" : "全部申请" : activeView === "people" ? "通讯录" : activeView === "knowledge" ? knowledgeTab === "ask" ? "AI 助手" : knowledgeTab === "submit" ? "上传资料" : knowledgeTab === "mine" ? "我的资料" : knowledgeTab === "review" ? "资料审核" : "知识资料管理" : activeView === "members" ? "成员审核" : activeView === "oem" ? "官网 OEM 申请" : activeView === "notifications" ? "飞书提醒" : activeView === "profile" ? "我的" : "流程与规则";
-  if (!session) return <div className="registration-shell"><div className="registration-card"><div className="registration-brand-lockup"><strong>{officialBrand}</strong><span>联合研发 OA</span></div><a className="oa-gate-guide-link" href="/guide"><BookOpen className="size-4" />项目章程与使用指南</a><h1>请登录账号</h1><p className="registration-intro">正在加载安全登录方式，请稍候。完成登录与 OA 准入后，实验室 AI 将自动显示。</p></div></div>;
-  if (!session.registered && (session.accountBindingRequired || session.accountBindingConflict || session.platformIdentityMissing || session.externalIdentityLinkRequired || session.githubIdentityLinkRequired || session.feishuIdentityLinkRequired)) return <><Toaster position="top-right" /><IdentityAccessGate session={session} onRefresh={refreshSession} /></>;
-  if (session.status === "pending") return <><Toaster position="top-right" /><PendingGate session={session} onRefresh={refreshSession} /></>;
-  if (!session.registered) return <><Toaster position="top-right" /><RegistrationGate initialUser={session.user} initialStatus={session.status} chatgptLoginEnabled={session.chatgptLoginEnabled} githubLoginEnabled={session.githubLoginEnabled} feishuLoginEnabled={session.feishuLoginEnabled} onRegistered={setSession} /></>;
-  if (needsNda) return <><Toaster position="top-right" /><NdaAdmissionGate key={ndaAdmissionIdentityKey(session.user?.email)} session={session} onRefresh={refreshSession} /></>;
+  const secondaryTitle = activeView === "future-stars" ? "未来之星" : activeView === "library" ? "资料库" : activeView === "home" ? "入组导览" : activeView === "chat" ? "消息" : activeView === "mail" ? "邮箱" : activeView === "dashboard" ? "审批工作台" : activeView === "todos" ? "待我处理" : activeView === "project" ? "工作台" : activeView === "requests" ? showMineOnly ? "待我审批" : "全部申请" : activeView === "people" ? "通讯录" : activeView === "knowledge" ? knowledgeTab === "ask" ? "AI 助手" : knowledgeTab === "submit" ? "上传资料" : knowledgeTab === "mine" ? "我的资料" : knowledgeTab === "review" ? "资料审核" : "知识资料管理" : activeView === "members" ? "成员审核" : activeView === "oem" ? "官网 OEM 申请" : activeView === "notifications" ? "飞书提醒" : activeView === "profile" ? "我的" : "流程与规则";
+  if (!session) return <OaLoginWorkspace loading />;
+  if (!session.registered && (session.accountBindingRequired || session.accountBindingConflict || session.platformIdentityMissing || session.externalIdentityLinkRequired || session.githubIdentityLinkRequired || session.feishuIdentityLinkRequired)) return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user}><IdentityAccessGate session={session} onRefresh={refreshSession} /></OaLoginWorkspace></>;
+  if (session.status === "pending") return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user}><PendingGate session={session} onRefresh={refreshSession} /></OaLoginWorkspace></>;
+  if (!session.registered) return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user} loginContent={<RegistrationGate compact initialUser={session.user} initialStatus={session.status} chatgptLoginEnabled={session.chatgptLoginEnabled} githubLoginEnabled={session.githubLoginEnabled} feishuLoginEnabled={session.feishuLoginEnabled} onRegistered={setSession} />} /></>;
+  if (needsNda) return <><Toaster position="top-right" /><OaLoginWorkspace user={session.user}><NdaAdmissionGate key={ndaAdmissionIdentityKey(session.user?.email)} session={session} onRefresh={refreshSession} /></OaLoginWorkspace></>;
   return (
     <OaConversationProvider key={session.user?.email || "oa-member"} currentUser={session.user || undefined} visible={(activeView === "knowledge" && knowledgeTab === "ask") || (mobileDirect && activeView === "chat")} onOpenChat={() => { setKnowledgeTab("ask"); navigate(mobileDirect ? "chat" : "knowledge"); }}>
     <OaAiMemberProvider onTeamChat={() => navigate("chat")}>
@@ -2646,45 +2703,40 @@ export default function Home() {
       <Toaster position="top-right" />
       <button type="button" className={`mobile-nav-overlay ${mobileNavOpen ? "visible" : ""}`} onClick={() => { setMobileNavOpen(false); mobileMenuButtonRef.current?.focus(); }} aria-label="关闭导航" aria-hidden={!mobileNavOpen} tabIndex={mobileNavOpen ? 0 : -1} />
       <div ref={mobileSidebarRef} id="mobile-navigation" className={`mobile-sidebar ${mobileNavOpen ? "open" : ""}`} role="dialog" aria-modal="true" aria-label="移动导航" aria-hidden={!mobileNavOpen}>
-        <Sidebar activeView={activeView} setActiveView={navigate} onNew={() => { openNewRequest(); setMobileNavOpen(false); }} onProfile={() => navigate("profile")} userName={session.user?.displayName} userAvatarDataUrl={myAvatarDataUrl} authProvider={session.user?.authProvider} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} canReviewKnowledge={Boolean(session.canReviewKnowledge)} selectedKnowledgeTab={knowledgeTab} onKnowledgeTab={(tab) => { setKnowledgeTab(tab); navigate("knowledge"); }} onMyPending={openMyPending} onOpenChat={() => setMobileNavOpen(false)} />
+        <Sidebar activeView={activeView} setActiveView={navigate} onNew={() => { openNewRequest(); setMobileNavOpen(false); }} onProfile={() => navigate("profile")} userName={session.user?.displayName} userAvatarDataUrl={myAvatarDataUrl} authProvider={session.user?.authProvider} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} canReviewKnowledge={Boolean(session.canReviewKnowledge)} selectedKnowledgeTab={knowledgeTab} onKnowledgeTab={(tab) => { setKnowledgeTab(tab); navigate("knowledge"); }} onMyPending={openMyPending} pendingCount={pendingCount} onOpenChat={() => setMobileNavOpen(false)} />
       </div>
-      <div id="oa-desktop-navigation" className="oa-desktop-navigation"><Sidebar activeView={activeView} setActiveView={navigate} onNew={openNewRequest} onProfile={() => navigate("profile")} userName={session.user?.displayName} userAvatarDataUrl={myAvatarDataUrl} authProvider={session.user?.authProvider} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} canReviewKnowledge={Boolean(session.canReviewKnowledge)} selectedKnowledgeTab={knowledgeTab} onKnowledgeTab={(tab) => { setKnowledgeTab(tab); navigate("knowledge"); }} onMyPending={openMyPending} onOpenChat={() => setMobileNavOpen(false)} /></div>
+      <div id="oa-desktop-navigation" className="oa-desktop-navigation"><Sidebar activeView={activeView} setActiveView={navigate} onNew={openNewRequest} onProfile={() => navigate("profile")} userName={session.user?.displayName} userAvatarDataUrl={myAvatarDataUrl} authProvider={session.user?.authProvider} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} canReviewKnowledge={Boolean(session.canReviewKnowledge)} selectedKnowledgeTab={knowledgeTab} onKnowledgeTab={(tab) => { setKnowledgeTab(tab); navigate("knowledge"); }} onMyPending={openMyPending} pendingCount={pendingCount} onOpenChat={() => setMobileNavOpen(false)} /></div>
       <main className="main-shell">
         <header className={isModelHeader ? "oa-model-chat-header" : "topbar"}>
           <button type="button" className="workspace-sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"} aria-expanded={!sidebarCollapsed} aria-controls="oa-desktop-navigation"><Menu className="size-5" /></button>
           <button ref={mobileMenuButtonRef} className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="打开导航" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation"><Menu className="size-5" /></button>
           {isModelHeader ? <div className="oa-model-chat-title">机器人自主移动与操作实验室</div> : <OaConversationTitle><div className="oa-topbar-secondary-title"><span className="oa-lab-title">机器人自主移动与操作实验室</span><strong>{secondaryTitle}</strong></div></OaConversationTitle>}
+          <button type="button" className={`oa-global-pending ${typeof pendingCount === "number" && pendingCount > 0 ? "has-pending" : ""}`} onClick={openMyPending} aria-label={`待我处理，${typeof pendingCount === "number" ? pendingCount + " 条" : "正在同步"}`}><ListTodo aria-hidden="true" /><span>待我处理</span><b className="oa-pending-count">{pendingCount}</b></button>
           <div className={isModelHeader ? "oa-model-chat-actions" : "topbar-actions"}>{isModelHeader && <OaNewChatButton />}
+            <OaAccountMenu user={session.user} avatarDataUrl={myAvatarDataUrl} roleLabel={sessionRoleLabel(session.role, Boolean(session.isAdmin))} onIdentityChanged={(fullName, avatarDataUrl) => { setMyAvatarDataUrl(avatarDataUrl); setSession((current) => current?.user && current.user.email === session.user?.email ? { ...current, user: { ...current.user, displayName: fullName } } : current); }} />
 
 
           </div>
         </header>
-        <div className="project-pane" hidden={activeView !== "project" && activeView !== "todos"}><ProjectWorkspace mode={activeView === "todos" ? "todos" : "project"} approvals={approvals} approvalsReady={dataReady} currentUserEmail={session.user?.email} people={session.user ? [{ email: session.user.email, name: session.user.displayName }] : []} canReviewKnowledge={Boolean(session.canReviewKnowledge)} canManageProject={Boolean(session.isAdmin || session.role === "project_owner")} onOpenApproval={openApproval} onOpenKnowledgeReview={() => { setKnowledgeTab("review"); navigate("knowledge"); }} onOpenLibrary={() => navigate("library")} /></div>
+        {["project", "dashboard", "requests"].includes(activeView) && <button type="button" className="oa-pending-banner" onClick={openMyPending}><ListTodo aria-hidden="true" /><span className="oa-pending-banner-copy"><strong>待我处理 <span className={`oa-pending-count ${typeof pendingCount === "number" && pendingCount > 0 ? "has-pending" : ""}`}>{pendingCount}</span></strong><small>{pendingCount === 0 ? "当前没有待办，有新事项会在这里提醒。" : "确认、审核、补充材料与任务，轮到你处理的都在这里。"}</small></span><span className="oa-pending-banner-action">查看并处理 <ArrowUpRight aria-hidden="true" /></span></button>}
+        <div className="project-pane" hidden={activeView !== "project" && activeView !== "todos"}><ProjectWorkspace mode={activeView === "todos" ? "todos" : "project"} approvals={approvals} pendingApprovals={myPendingApprovals} returnedApprovals={returnedApprovals} canReviewMembers={Boolean(session.isAdmin)} onOpenMembers={() => navigate("members")} onOpenKnowledgeMine={() => { setKnowledgeTab("mine"); navigate("knowledge"); }} onPendingCountChange={setSupplementalPendingCount} approvalsReady={dataReady} currentUserEmail={session.user?.email} people={session.user ? [{ email: session.user.email, name: session.user.displayName }] : []} canReviewKnowledge={Boolean(session.canReviewKnowledge)} canManageProject={Boolean(session.isAdmin || session.role === "project_owner")} onOpenApproval={openApproval} onOpenKnowledgeReview={() => { setKnowledgeTab("review"); navigate("knowledge"); }} onOpenLibrary={() => navigate("library")} /></div>
         {activeView === "profile" && <nav className="oa-my-tools" aria-label="我的工具"><button type="button" onClick={() => navigate("todos")}>我的待办</button><button type="button" onClick={() => { setKnowledgeTab("mine"); navigate("knowledge"); }}>我的资料</button><button type="button" onClick={() => navigate("mail")}>邮箱</button><button type="button" onClick={() => navigate("home")}>入组导览</button><button type="button" onClick={() => navigate("rules")}>流程规则</button>{session.isAdmin && <><button type="button" onClick={() => navigate("members")}>成员审核</button><button type="button" onClick={() => navigate("notifications")}>飞书提醒</button><a href="/admin">系统管理</a></>}</nav>}
-        <div className="oa-knowledge-pane" hidden={activeView !== "knowledge" && !(mobileDirect && ["library", "chat"].includes(activeView))}><KnowledgeView canReviewKnowledge={Boolean(session.canReviewKnowledge)} isAdmin={Boolean(session.isAdmin)} activeSection={mobileDirect && activeView === "library" ? "submit" : mobileDirect && activeView === "chat" ? "ask" : knowledgeTab} onSectionChange={(tab) => { setKnowledgeTab(tab); if (activeView === "library") navigate("knowledge"); }} /></div>
-        {activeView === "library" ? <><div className="oa-section-actions"><button type="button" onClick={() => { setKnowledgeTab("submit"); setPrimaryView("library"); navigate("knowledge"); }}>上传资料</button></div><OaLibraryWorkspace canManage={Boolean(session.canReviewKnowledge)} onMine={() => { setKnowledgeTab("mine"); navigate("knowledge"); }} onManage={() => { setKnowledgeTab("manage"); navigate("knowledge"); }} /></> : activeView === "home" ? <StudentHomeView session={session} onNavigate={navigate} onOpenNewRequest={openNewRequest} /> : activeView === "chat" ? (mobileDirect ? null : <><div className="oa-model-entrances"><button type="button" onClick={() => { setKnowledgeTab("ask"); setPrimaryView("model"); navigate("knowledge"); }}>实验室内部大模型</button><a href="https://chat.omindos.cn/" target="_blank" rel="noreferrer">实验室对外大模型 ↗</a></div><OaAiChatEntrances /><CollaborationWorkspace currentUserEmail={session.user?.email} createRequest={chatCreateRequest} /></>) : activeView === "mail" ? <MailWorkspace /> : activeView === "notifications" ? <NotificationStatus /> : activeView === "oem" ? <OemInbox /> : activeView === "members" ? <MembersView currentEmail={session.user?.email} /> : activeView === "people" ? <PeopleView currentUser={session.user} canManageDepartments={Boolean(session.isAdmin)} /> : activeView === "knowledge" ? null : activeView === "todos" || activeView === "project" ? null : activeView === "profile" ? <ProfileSettingsView currentUser={session.user} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} migrationExportEnabled={session.migrationExportEnabled} migrationUnfreezeEnabled={session.migrationUnfreezeEnabled} onIdentityChanged={(fullName, avatarDataUrl) => { setMyAvatarDataUrl(avatarDataUrl); setSession((current) => current?.user ? { ...current, user: { ...current.user, displayName: fullName } } : current); }} /> : activeView === "rules" ? <RulesView /> : activeView === "requests" ? <RequestsView approvals={approvals} filteredApprovals={filteredApprovals} myPendingApprovals={myPendingApprovals} dataReady={dataReady} activeFilter={activeFilter} setActiveFilter={setActiveFilter} showMineOnly={showMineOnly} onClearMine={() => setShowMineOnly(false)} onOpen={openApproval} /> : <>
-          <section className="page-heading dashboard-heading">
-            <div>
-              <div className="eyebrow"><span className="eyebrow-line" />{officialName}</div>
-              <h1>审批工作台</h1>
-              <p>{session.user?.displayName || "成员"}，在这里跟进待办、提交申请与查阅归档记录。</p>
-            </div>
-            <div className="heading-actions"><button className="secondary-action" onClick={() => setActiveView("rules")}><SlidersHorizontal className="size-4" />查看规则</button><Button className="primary-button new-button" onClick={openNewRequest}><Plus className="size-4" />新建审核</Button></div>
-          </section>
-          <div className="oa-guide-banner"><div><strong>让你的工作有记录，申请有进度，成果可查阅。</strong><p>完成阶段成果、需要采购或申请月度劳务时，从“新建审核”开始。</p></div><a href="/guide">项目章程与使用指南 <ArrowUpRight className="size-4" /></a></div>
+        <div className="oa-knowledge-pane" hidden={activeView !== "knowledge" && !(mobileDirect && activeView === "chat")}><KnowledgeView canReviewKnowledge={Boolean(session.canReviewKnowledge)} isAdmin={Boolean(session.isAdmin)} activeSection={mobileDirect && activeView === "chat" ? "ask" : knowledgeTab} onSectionChange={(tab) => { setKnowledgeTab(tab); if (activeView === "library") navigate("knowledge"); }} /></div>
+        {activeView === "future-stars" ? (session.isAdmin ? <FutureStars key={session.user?.email} /> : null) : activeView === "library" ? <><OaGenericImport onSubmitted={() => window.dispatchEvent(new Event("oa-library-updated"))} /><OaLibraryWorkspace canManage={Boolean(session.canReviewKnowledge)} onMine={() => { setKnowledgeTab("mine"); navigate("knowledge"); }} onManage={() => { setKnowledgeTab("manage"); navigate("knowledge"); }} /></> : activeView === "home" ? <StudentHomeView session={session} onNavigate={navigate} onOpenNewRequest={openNewRequest} /> : activeView === "chat" ? (mobileDirect ? null : <><div className="oa-model-entrances"><button type="button" onClick={() => { setKnowledgeTab("ask"); setPrimaryView("model"); navigate("knowledge"); }}>实验室内部大模型</button><a href="https://chat.omindos.cn/" target="_blank" rel="noreferrer">实验室对外大模型 ↗</a></div><OaAiChatEntrances /><CollaborationWorkspace currentUserEmail={session.user?.email} createRequest={chatCreateRequest} /></>) : activeView === "mail" ? <MailWorkspace /> : activeView === "notifications" ? <NotificationStatus /> : activeView === "oem" ? <OemInbox /> : activeView === "members" ? <MembersView currentEmail={session.user?.email} /> : activeView === "people" ? <PeopleView currentUser={session.user} canManageDepartments={Boolean(session.isAdmin)} canViewPersonnel={Boolean(session.isAdmin || session.isFinanceOwner || session.canViewAllPersonnel)} /> : activeView === "knowledge" ? null : activeView === "todos" || activeView === "project" ? null : activeView === "profile" ? <ProfileSettingsView currentUser={session.user} currentRole={session.role} isAdmin={Boolean(session.isAdmin)} migrationExportEnabled={session.migrationExportEnabled} migrationUnfreezeEnabled={session.migrationUnfreezeEnabled} onIdentityChanged={(fullName, avatarDataUrl) => { setMyAvatarDataUrl(avatarDataUrl); setSession((current) => current?.user ? { ...current, user: { ...current.user, displayName: fullName } } : current); }} /> : activeView === "rules" ? <RulesView /> : activeView === "requests" ? <RequestsView approvals={approvals} filteredApprovals={filteredApprovals} myPendingApprovals={myPendingApprovals} dataReady={dataReady} activeFilter={activeFilter} setActiveFilter={setActiveFilter} showMineOnly={showMineOnly} onClearMine={() => setShowMineOnly(false)} onOpen={openApproval} /> : <>
+          <div className="oa-guide-banner oa-approval-toolbar"><div><strong>让你的工作有记录，申请有进度，成果可查阅。</strong><p>完成阶段成果、需要采购或申请月度劳务时，从“新建审批”开始。</p></div><Button type="button" className="primary-button new-button" onClick={openNewRequest}><Plus className="size-4" />新建审批</Button></div>
           <section className="stats-grid">
             <button type="button" className="stat-card stat-card-action stat-card-approved" onClick={() => setMetricPanel("approved")} aria-label="查看本月已通过的文档"><div className="stat-label">本月已通过</div><div className="stat-value">{monthlyApproved.length}<span>条</span></div><div className="stat-foot positive"><span className="stat-icon"><Check className="size-4" /></span><span>点击查看已完成审批文档</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
             <button type="button" className="stat-card stat-card-action stat-card-archive" onClick={() => setMetricPanel("archive")} aria-label="查看归档完整率详情"><div className="stat-label">归档完整率</div><div className="stat-value">{archiveRatio}<span>%</span></div><div className="stat-foot positive"><span className="stat-icon"><Archive className="size-4" /></span><span>点击查看归档统计</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
             <button type="button" className="stat-card stat-card-action stat-card-people" onClick={() => navigate("people")} aria-label="查看协作成员"><div className="stat-label">协作成员</div><div className="stat-value">{peopleCount === null ? "—" : peopleCount}<span>人</span></div><div className="stat-foot"><span className="stat-icon"><UsersRound className="size-4" /></span><span>点击查看在线成员与私聊</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
-            <button type="button" className="stat-card stat-card-highlight stat-card-action" onClick={openMyPending} aria-label="查看统一待办"><div className="stat-label">待我处理</div><div className="stat-value">{pendingCount}<span>条</span></div><div className="stat-foot"><span className="stat-icon"><Clock3 className="size-4" /></span><span>审批、资料审核和行动项统一汇总</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
+            <button type="button" className="stat-card stat-card-highlight stat-card-action" onClick={openMyPending} aria-label="查看统一待办"><div className="stat-label">待我处理</div><div className="stat-value">{pendingCount}<span>条</span></div><div className="stat-foot"><span className="stat-icon"><Clock3 className="size-4" /></span><span>所有需要本人处理的事项</span><ArrowUpRight className="stat-action-arrow size-4" /></div></button>
           </section>
           <FlowCard />
         </>}
       </main>
-      <OaPrimaryNavigation active={primaryView} onNavigate={(view) => navigate(view === "model" ? "chat" : view)} />
+      <OaPrimaryNavigation pendingCount={pendingCount} active={primaryView} isAdmin={Boolean(session.isAdmin)} onNavigate={(view) => navigate(view === "model" ? "chat" : view)} />
       <NewRequestDialog key={requestDialogEpoch} open={newOpen} onOpenChange={setNewOpen} onCreate={createApproval} approvals={approvals} currentUser={session.user} currentRole={session.role} isAdmin={session.isAdmin} draft={editingDraft} onDraftConsumed={() => setEditingDraft(null)} />
-      <DetailSheet approval={selectedApproval} events={detailEvents} loading={detailLoading} error={detailError} currentEmail={session.user?.email} isAdmin={session.isAdmin} open={Boolean(selectedId)} onOpenChange={(open) => { if (!open) closeApproval(); }} onRetry={retryApprovalDetail} onApprove={approveSelected} onConfirmPurchase={confirmPurchaseSelected} onReturn={returnSelected} onForceReturn={forceReturnSelected} onResubmit={resubmitSelected} onWithdraw={withdrawSelected} onVoid={voidSelected} onArchiveNote={archiveNoteSelected} onEditDraft={openDraftEditor} />
-      <MetricDialog panel={metricPanel} approvals={approvals} monthlyApproved={monthlyApproved} archiveRatio={archiveRatio} onOpenApproval={openMetricApproval} onOpenChange={setMetricPanel} />
+      <DetailSheet approval={selectedApproval} events={detailEvents} loading={detailLoading} error={detailError} currentEmail={session.user?.email} isAdmin={session.isAdmin} open={Boolean(selectedId)} onOpenChange={(open) => { if (!open) closeApproval(); }} onRetry={retryApprovalDetail} onApprove={approveSelected} onConfirmPurchase={confirmPurchaseSelected} onReturn={returnSelected} onForceReturn={forceReturnSelected} onResubmit={resubmitSelected} onWithdraw={withdrawSelected} onVoid={voidSelected} onDeleteReturned={() => void deleteReturnedApproval()} onArchiveNote={archiveNoteSelected} onEditDraft={openDraftEditor} />
+      <MetricDialog key={metricPanel || "closed"} panel={metricPanel} approvals={approvals} monthlyApproved={monthlyApproved} archiveRatio={archiveRatio} onOpenApproval={openMetricApproval} onOpenChange={setMetricPanel} />
     </div>
     </OaAiMemberProvider>
     </OaConversationProvider>

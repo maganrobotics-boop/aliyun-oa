@@ -12,6 +12,7 @@ import {
 } from "../../../../lib/knowledge-policy";
 import {
   activateAdminKnowledgeEdit,
+  deleteOwnKnowledgeItems,
   findKnowledgeItem,
   getKnowledgeItemDetail,
   knowledgeRevisionHashExists,
@@ -204,4 +205,27 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   } catch {
     return privateJson({ error: "知识流转暂时无法保存，请稍后重试。" }, { status: 500 });
   }
+}
+
+
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const access = await authorizeKnowledgeAccess();
+  if ("response" in access) return access.response;
+  const id = await safeId(params);
+  if (!id) return privateJson({ error: "知识条目不存在。" }, { status: 404 });
+  const origin = request.headers.get("origin");
+  if ((origin && origin !== new URL(request.url).origin) || request.headers.get("sec-fetch-site") === "cross-site") return privateJson({ error: "请在 OA 内删除本人资料。" }, { status: 403 });
+  if (!isJsonRequest(request)) return privateJson({ error: "请使用 JSON 提交删除请求。" }, { status: 415 });
+  const body = await readBoundedJsonObject(request, 2048);
+  if (!body.ok || Object.keys(body.value).some(key => key !== "mutationRevision") || typeof body.value.mutationRevision !== "string" || !body.value.mutationRevision) return privateJson({ error: "请刷新资料后再删除。" }, { status: 400 });
+  try {
+    const existing = await findKnowledgeItem(id, access.actor);
+    if (!existing || existing.submitter_member_id !== access.actor.memberId || existing.submitter_email.trim().toLowerCase() !== access.actor.email.trim().toLowerCase()) return privateJson({ error: "资料不存在或当前账号不可删除。" }, { status: 404 });
+    if (body.value.mutationRevision !== existing.mutation_revision) return privateJson({ error: "资料已更新，请刷新后重新选择删除。" }, { status: 409 });
+    const db = await getDb();
+    if (!(await consumeWriteRateLimit(db, { actorSubject: access.actor.accountUserId, scope: "knowledge_delete", limit: MAX_KNOWLEDGE_WRITES_PER_MINUTE }))) return privateJson({ error: "操作过于频繁，请稍后再试。" }, { status: 429 });
+    const result = await deleteOwnKnowledgeItems([{ id: existing.id, mutationRevision: existing.mutation_revision }], access.actor);
+    const deleted = result.deletedIds.includes(existing.id);
+    return deleted ? privateJson({ deleted: true, id }) : privateJson({ error: "资料或账号权限已更新，请刷新后重试。" }, { status: 409 });
+  } catch { return privateJson({ error: "资料暂时无法删除，请稍后重试。" }, { status: 500 }); }
 }

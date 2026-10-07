@@ -19,7 +19,7 @@ const vite = await createServer({
       return null;
     },
     load(id) {
-      if (id === "\0circulation-db") return `export async function getDb() { return globalThis.${stateKey}.db; }`;
+      if (id === "\0circulation-db") return `export async function getDb() { return globalThis.${stateKey}.db; } export async function getD1Database() { return globalThis.${stateKey}.db.$client; }`;
       if (id !== "\0circulation-auth") return null;
       return `import { sql } from "drizzle-orm";
         const state = () => globalThis.${stateKey};
@@ -46,7 +46,7 @@ function d1Adapter(database) {
   function prepare(query, params = []) {
     const execute = () => ({ success: true, results: database.prepare(query).all(...params), meta: { changes: Number(database.prepare("SELECT changes() n").get().n) } });
     return {
-      bind(...values) { return prepare(query, values); }, async all() { return execute(); }, async run() { return execute(); },
+      bind(...values) { return prepare(query, values); }, async first() { return database.prepare(query).get(...params) ?? null; }, async all() { return execute(); }, async run() { return execute(); },
       async raw() { const statement = database.prepare(query); statement.setReturnArrays(true); return statement.all(...params); },
     };
   }
@@ -64,6 +64,43 @@ const ids = ["author", "recipient1", "recipient2", "reviewer1", "reviewer2", "ou
 function setActor(id) {
   globalThis[stateKey].actor = { user: { email: `${id}@example.com`, displayName: id }, memberId: id, accountUserId: `email:${id}@example.com`, memberMutationRevision: "member-r1", role: "member", isAdmin: false, isFinanceOwner: false, ndaCompleted: true };
 }
+
+test("an unassigned administrator can approve the circulation review node without forging other decisions", async () => {
+  const created = await create(body([], ["reviewer1", "reviewer2"]));
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const id = created.data.approval.id;
+  setActor("outsider");
+  globalThis[stateKey].actor.isAdmin = true;
+  const response = await detail.PATCH(request("PATCH", { action: "approve", note: "管理员核对批准" }), { params: Promise.resolve({ id }) });
+  const result = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(result));
+  assert.equal(result.approval.status, "已归档");
+  assert.deepEqual(result.approval.payload.circulationApprovals, []);
+  assert.equal(result.approval.payload.administratorReviews[0].email, "outsider@example.com");
+  assert.equal(events(id).at(-1).actor_email, "outsider@example.com");
+});
+
+test("application input cannot forge a stored administrator review", async () => {
+  const data = body([], ["reviewer1"]);
+  data.payload.administratorReviews = [{ email: "outsider@example.com", step: "指定审批" }];
+  const result = await create(data);
+  assert.equal(result.status, 201, JSON.stringify(result.data));
+  assert.equal(result.data.approval.payload.administratorReviews, undefined);
+});
+
+test("resubmission clears previous administrator review metadata and retains the return event", async () => {
+  const created = await create(body([], ["reviewer1"]));
+  const id = created.data.approval.id;
+  const payload = JSON.parse(row(id).payload_json);
+  payload.administratorReviews = [{ step: "指定审批", email: "outsider@example.com", name: "outsider", memberId: "outsider", accountUserId: "email:outsider@example.com", approvedAt: "2026-09-01T00:00:00.000Z", assignedReviewerEmail: "reviewer1@example.com" }];
+  sqlite.prepare("UPDATE approvals SET payload_json=? WHERE id=?").run(JSON.stringify(payload), id);
+  setActor("outsider");
+  globalThis[stateKey].actor.isAdmin = true;
+  assert.equal((await detail.PATCH(request("PATCH", { action: "return", note: "管理员核验后退回补充测试材料" }), { params: Promise.resolve({ id }) })).status, 200);
+  assert.equal((await patch(id, "author", "resubmit", { note: "申请人已补充测试材料" })).status, 200);
+  assert.equal(JSON.parse(row(id).payload_json).administratorReviews, undefined);
+  assert.match(events(id).find((event) => event.action === "return").note, /系统管理员退回/);
+});
 beforeEach(() => {
   sqlite?.close(); sqlite = new DatabaseSync(":memory:"); batchTail = Promise.resolve();
   const dir = new URL("../drizzle/", import.meta.url);

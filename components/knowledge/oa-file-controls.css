@@ -28,5 +28,40 @@
 .oa-generic-source .oa-attachment-menu { top:calc(100% + 8px); bottom:auto; }
 .oa-generic-preview { display:grid; gap:14px; margin-top:18px; }
 .oa-generic-preview > label { display:grid; gap:7px; color:#344155; font-size:13px; font-weight:650; }
-.oa-generic-preview input, .oa-generic-preview textarea { box-sizing:border-box; width:100%; padding:11px 13px; border:1px solid #ccd6e2; border-radius:12px; background:#f8fafc; color:#1e293b; font:inherit; line-height:1.6; resize:vertical; }
+.oa-generic-preview input:not([type="checkbox"]), .oa-generic-preview textarea { box-sizing:border-box; width:100%; padding:11px 13px; border:1px solid #ccd6e2; border-radius:12px; background:#f8fafc; color:#1e293b; font:inherit; line-height:1.6; resize:vertical; }
 .oa-shared-chat .oa-document-dialog > footer { max-height:48%; overflow:auto; overscroll-behavior:contain; }
+
+
+/* A compact upload entry stays above the library on desktop and mobile. */
+.oa-app.oa-workspace .oa-generic-source.oa-upload-compact { padding:14px 16px; margin:12px 0 16px; border-radius:12px; }
+.oa-upload-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.oa-app.oa-workspace .oa-upload-compact .oa-upload-toolbar h2 { margin:0; font-size:16px; line-height:1.4; }
+.oa-upload-toolbar p { margin:4px 0 0; font-size:12px; color:#627891; line-height:1.5; }
+.oa-upload-buttons { display:flex; gap:8px; flex-wrap:wrap; }
+.oa-upload-buttons > button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:44px; padding:9px 14px; border-radius:9px; font-size:14px; font-weight:600; }
+.oa-upload-buttons .oa-upload-primary { color:#fff; background:#2558c8; border:1px solid #2558c8; }
+.oa-upload-buttons .oa-upload-folder { color:#486a96; background:#fff; border:1px solid #d7e1ed; }
+.oa-upload-buttons > button:disabled { opacity:.55; cursor:wait; }
+.oa-upload-help { margin-top:8px; color:#627891; font-size:12px; }
+.oa-upload-help > summary, .oa-generic-preview summary { cursor:pointer; padding:5px 0; }
+.oa-upload-summary { margin:0; color:#627891; font-size:13px; }
+.oa-workspace .knowledge-view[data-section="submit"] > .knowledge-heading,
+.oa-workspace .knowledge-view[data-section="submit"] > .knowledge-scope-summary { display:none; }
+.oa-workspace .knowledge-view[data-section="submit"] { padding-top:0; }
+.oa-workspace .knowledge-view[data-section="submit"] .knowledge-tabs { margin-top:0; }
+@media(max-width:560px) {
+ .oa-app.oa-workspace .oa-generic-source.oa-upload-compact { padding:12px; margin:8px 0 12px; }
+ .oa-upload-toolbar { gap:10px; }
+ .oa-upload-buttons { flex:1 0 100%; }
+ .oa-upload-buttons .oa-upload-primary { flex:1; }
+}
+.oa-knowledge-draft-fields { display: grid; gap: 12px; margin: 12px 0; }
+.oa-knowledge-draft-fields label { display: grid; gap: 6px; min-width: 0; }
+.oa-knowledge-draft-fields input, .oa-knowledge-draft-fields textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #d4dce6; border-radius: 8px; background: #fff; color: #19283e; font: inherit; }
+.oa-knowledge-draft-fields textarea { resize: vertical; line-height: 1.65; }
+.oa-knowledge-draft-fields input:focus-visible, .oa-knowledge-draft-fields textarea:focus-visible { outline: 2px solid #4d78cf; outline-offset: 2px; }
+.oa-knowledge-draft-fields :disabled { opacity: .7; }
+.oa-draft-image-descriptions > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 14px; margin-top: 12px; }
+.oa-draft-image-descriptions figure { min-width: 0; margin: 0; padding: 12px; border: 1px solid #dce3ec; border-radius: 8px; }
+.oa-draft-image-descriptions img { display: block; width: 100%; height: 180px; object-fit: contain; }
+.oa-draft-image-descriptions figcaption { overflow-wrap: anywhere; font-size: 12px; color: #586a80; margin: 8px 0; }
