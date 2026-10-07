@@ -1,4 +1,5 @@
 import { buildNdaAgreementTextForVersion, confidentialityAgreementKindFromPayload } from "./nda-agreement";
+import { PDF_EMBEDDED_FONT_WIDTHS } from "./pdf-font-widths";
 import {
   PDF_EMBEDDED_FONT_CID_MAP_COMPRESSED_BASE64,
   PDF_EMBEDDED_FONT_COMPRESSED_BASE64,
@@ -60,24 +61,32 @@ type TextItem = {
   gapAfter?: number;
   leading?: number;
   section?: boolean;
+  align?: "left" | "center";
+  gapBefore?: number;
+  pageBreakBefore?: boolean;
+  keepWithNext?: number;
 };
 
 type ImageItem = { kind: "signature"; gapAfter?: number };
-type LayoutItem = TextItem | ImageItem;
+type FieldItem = { kind: "field"; label: string; value: string; indent?: number; gapAfter?: number };
+type LayoutItem = TextItem | ImageItem | FieldItem;
 type SignatureImage = { width: number; height: number; compressedRgb: Uint8Array };
 
 const encoder = new TextEncoder();
 const PAGE_WIDTH = 595;
 const PAGE_HEIGHT = 842;
-const PAGE_LEFT = 48;
-const PAGE_RIGHT = 48;
-const PAGE_TOP = 790;
-const PAGE_BOTTOM = 58;
+const PAGE_LEFT = 54;
+const PAGE_RIGHT = 54;
+const PAGE_TOP = 786;
+const PAGE_BOTTOM = 62;
+const FIELD_LABEL_WIDTH = 104;
+const FIELD_LEADING = 15;
 let embeddedFontCompressedCache: Uint8Array | undefined;
 let embeddedFontCidMapCompressedCache: Uint8Array | undefined;
 let embeddedFontSupportedBitsCache: Uint8Array | undefined;
 
 const FIELD_LABELS: Record<string, string> = {
+  amount: "申请金额",
   circulationContent: "流转事项内容",
   circulationRecipients: "流转对象",
   circulationApprovers: "指定审批人",
@@ -132,9 +141,59 @@ const FIELD_LABELS: Record<string, string> = {
   totalScore: "核算总工时",
   totalWorkHours: "总工时",
   workflowMutationRevision: "流程写入版本",
+  agreementTextSnapshot: "签署正文快照",
+  agreementHash: "协议正文 SHA-256",
+  signatureHash: "手写签名 SHA-256",
+  recordHash: "签署记录 SHA-256",
+  archivedByEmail: "归档人账号",
+  initialReviewerName: "初审人",
+  administratorReviews: "管理员审核记录",
+  memberId: "成员编号",
+  accountUserId: "账户主体",
+  step: "审核环节",
+  assignedReviewerEmail: "指定审核人账号",
+  ratioBasisPoints: "贡献比例计算基点",
+  developersIdentityRecords: "开发人员主体编号",
+  circulationRecipientsIdentityRecords: "流转对象主体编号",
+  circulationApproversIdentityRecords: "审批人主体编号",
+  id: "记录编号",
+  name: "姓名",
+  email: "账号",
+  title: "事项标题",
+  work: "承担工作",
+  ratio: "贡献比例（%）",
+  weightedHours: "折算工时",
+  workHours: "工作时数",
+  hours: "工时",
+  confirmed: "已确认",
+  confirmedAt: "确认时间",
+  approvedAt: "审核时间",
+  reviewedAt: "审核时间",
+  actorName: "操作人",
+  actorEmail: "操作人账号",
+  status: "状态",
+  note: "说明",
+  reason: "原因",
+  approvalId: "审批编号",
+  technicalApprovalId: "技术成果编号",
+  contributionRatio: "贡献比例（%）",
+  contributionHours: "贡献工时",
+  voidReason: "作废原因",
+  voidedAt: "作废时间",
+  voidedBy: "作废操作人",
+  withdrawReason: "撤回原因",
+  withdrawnAt: "撤回时间",
+  withdrawnBy: "撤回操作人",
 };
 
 const OMITTED_PAYLOAD_FIELDS = new Set(["signatureDataUrl", "previewed", "agreed", "autoArchived"]);
+const AUDIT_PAYLOAD_FIELDS = new Set([
+  "agreementHash", "signatureHash", "recordHash", "signerAccountUserId",
+  "workflowMutationRevision", "laborClaimRevision", "claimantMemberId",
+  "purchaserMemberId", "suggestedPurchaserMemberId", "initialReviewerName", "initialReviewerEmail",
+  "archivedAt", "archivedBy", "archivedByEmail", "purchaserAssignedAt", "purchaserAssignedBy",
+  "developerConfirmations", "administratorReviews", "circulationConfirmations", "circulationApprovals",
+]);
 
 export function approvalEventActionLabel(action: string) {
   return action === "confirm_circulation" ? "流转确认" : action === "submitted" ? "提交"
@@ -164,8 +223,24 @@ function displayValue(value: unknown) {
   return cleanText(String(value)) || "—";
 }
 
+function displayDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return displayValue(value);
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
 function fieldLabel(key: string) {
   return FIELD_LABELS[key] || key.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+}
+
+function fieldValue(key: string, value: unknown) {
+  if (key === "agreementKind") return value === "member" ? "项目参与成员版" : value === "project_owner" ? "项目负责人版" : displayValue(value);
+  if (key.endsWith("At") && typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/u.test(value)) return displayDate(value);
+  return displayValue(value);
 }
 
 function flattenPayload(value: unknown, key = "", depth = 0): Array<{ label: string; value: string; depth: number }> {
@@ -185,135 +260,196 @@ function flattenPayload(value: unknown, key = "", depth = 0): Array<{ label: str
     if (!entries.length) return key ? [{ label: fieldLabel(key), value: "无", depth }] : [];
     return entries.flatMap(([childKey, childValue]) => flattenPayload(childValue, childKey, depth + (key ? 1 : 0)));
   }
-  return [{ label: key ? fieldLabel(key) : "内容", value: displayValue(value), depth }];
+  return [{ label: key ? fieldLabel(key) : "内容", value: fieldValue(key, value), depth }];
 }
 
-function textItem(text: string, size = 10, options: Partial<Omit<TextItem, "kind" | "text" | "size">> = {}): TextItem {
-  return { kind: "text", text: cleanText(text), size, color: [0.15, 0.22, 0.24], leading: Math.max(14, size * 1.5), gapAfter: 3, ...options };
+function textItem(text: string, size = 10.5, options: Partial<Omit<TextItem, "kind" | "text" | "size">> = {}): TextItem {
+  return { kind: "text", text: cleanText(text), size, color: [0.12, 0.16, 0.19], leading: Math.max(15, size * 1.6), gapAfter: 5, ...options };
 }
 
-function section(text: string): TextItem {
-  return textItem(text, 13, { color: [0.08, 0.37, 0.34], leading: 22, gapAfter: 7, section: true });
+function section(text: string, options: Partial<Omit<TextItem, "kind" | "text" | "size">> = {}): TextItem {
+  return textItem(text, 12, { color: [0.10, 0.28, 0.31], leading: 19, gapBefore: 8, gapAfter: 7, section: true, keepWithNext: 32, ...options });
+}
+
+function fieldItem(label: string, value: string, indent = 0): FieldItem {
+  return { kind: "field", label: cleanText(label), value: cleanText(value), indent, gapAfter: 7 };
+}
+
+function payloadItems(payload: Record<string, unknown>): LayoutItem[] {
+  return flattenPayload(payload).map((field) => field.value
+    ? fieldItem(field.label, field.value, Math.min(field.depth, 3) * 10)
+    : textItem(field.label, 10, { indent: Math.min(field.depth, 3) * 10, gapBefore: 5, gapAfter: 5, keepWithNext: 30 }));
+}
+
+function agreementParagraphs(approval: ApprovalPdfRecord) {
+  if (approval.type !== "保密协议") return [];
+  // The stored text is the document actually signed, including historical versions.
+  if (typeof approval.payload.agreementTextSnapshot === "string" && approval.payload.agreementTextSnapshot.trim()) {
+    return approval.payload.agreementTextSnapshot.split("\n").map(cleanText).filter(Boolean);
+  }
+  const kind = confidentialityAgreementKindFromPayload(approval.payload);
+  if (!kind || typeof approval.payload.agreementVersion !== "string") return [];
+  try {
+    return buildNdaAgreementTextForVersion(displayValue(approval.payload.signerName), displayValue(approval.payload.confidentialScope), kind, approval.payload.agreementVersion).split("\n").map(cleanText).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 function buildLayoutItems(input: ApprovalPdfInput): LayoutItem[] {
   const { approval, events, integrity } = input;
-  const items: LayoutItem[] = [
-    textItem("OriginMind × ARTS Robotics 联合研发 OA", 9, { color: [0.30, 0.47, 0.45], gapAfter: 12 }),
-    textItem(approval.title, 22, { color: [0.05, 0.19, 0.24], leading: 31, gapAfter: 5 }),
-    textItem(`${approval.type} · ${approval.status} / ${approval.currentStep}`, 11, { color: [0.35, 0.42, 0.46], gapAfter: 16 }),
-    section("基本信息"),
-    textItem(`归档编号：${approval.id}`),
-    textItem(`联合项目：${approval.project}`),
-    textItem(`申请人：${approval.requesterName}（${approval.requesterEmail}）`),
-    textItem(`创建时间：${approval.createdAt}`),
-    textItem(`${approval.status === "已归档" ? "归档" : "更新时间"}：${approval.updatedAt}`),
-    textItem(`事项负责人：${approval.owner || "—"}`),
-    textItem(`当前处理人：${approval.currentReviewerName ? `${approval.currentReviewerName}${approval.currentReviewerEmail ? `（${approval.currentReviewerEmail}）` : ""}` : "—"}`),
-    textItem(`金额：${approval.amount || "不适用"}`, 10, { gapAfter: 12 }),
-    section("事项摘要"),
-    textItem(approval.summary || "无", 10, { gapAfter: 12 }),
-  ];
-
-  if (approval.type === "保密协议") {
-    const kind = confidentialityAgreementKindFromPayload(approval.payload);
-    const signerName = displayValue(approval.payload.signerName);
-    const scope = displayValue(approval.payload.confidentialScope);
-    const version = displayValue(approval.payload.agreementVersion);
-    if (kind && version !== "—") {
-      try {
-        items.push(section("协议正文"));
-        for (const paragraph of buildNdaAgreementTextForVersion(signerName, scope, kind, version).split("\n")) {
-          items.push(textItem(paragraph, paragraph === "保密协议" || paragraph === "项目负责人保密承诺书" ? 13 : 10, { gapAfter: 6 }));
+  const paragraphs = agreementParagraphs(approval);
+  const isAgreement = approval.type === "保密协议" && paragraphs.length > 0;
+  const title = isAgreement ? paragraphs[0] : approval.title;
+  const mainPayload: Record<string, unknown> = {};
+  const auditPayload: Record<string, unknown> = {};
+  const representedAgreementFields = new Set(["signerName", "signerEmail", "signedAt"]);
+  for (const [key, value] of Object.entries(approval.payload)) {
+    if (OMITTED_PAYLOAD_FIELDS.has(key) || (isAgreement && key === "agreementTextSnapshot")) continue;
+    if (isAgreement && representedAgreementFields.has(key)) continue;
+    if (!isAgreement && ["developers", "circulationRecipients", "circulationApprovers"].includes(key) && Array.isArray(value)) {
+      const identityRecords: string[] = [];
+      mainPayload[key] = value.map((person, index) => {
+        if (!person || typeof person !== "object" || Array.isArray(person)) return person;
+        const readable = { ...person as Record<string, unknown> };
+        const metadata: string[] = [];
+        for (const field of ["memberId", "accountUserId", "ratioBasisPoints"]) {
+          if (!(field in readable)) continue;
+          metadata.push(fieldLabel(field) + "：" + displayValue(readable[field]));
+          delete readable[field];
         }
-        items.push(textItem("本人确认已阅读上述正文，并以本人实名认证账户完成电子手写签署。", 10, { color: [0.24, 0.42, 0.39], gapAfter: 9 }));
-      } catch {
-        // Historical records with an unsupported version still retain their raw fields below.
-      }
+        if (metadata.length) identityRecords.push(`${displayValue(readable.name || readable.email || "第 " + (index + 1) + " 项")} · ${metadata.join("；")}`);
+        return readable;
+      });
+      if (identityRecords.length) auditPayload[key + "IdentityRecords"] = identityRecords.join("\n");
+      continue;
     }
+    (isAgreement || AUDIT_PAYLOAD_FIELDS.has(key) ? auditPayload : mainPayload)[key] = value;
   }
-
-  items.push(section("申请数据"));
-  for (const field of flattenPayload(approval.payload)) {
-    const prefix = field.value ? `${field.label}：` : `${field.label}`;
-    items.push(textItem(`${prefix}${field.value}`, 9.5, { indent: Math.min(field.depth, 4) * 12, gapAfter: field.value ? 3 : 5 }));
+  const state = approval.currentStep && approval.currentStep !== approval.status ? `${approval.status} / ${approval.currentStep}` : approval.status;
+  const items: LayoutItem[] = [
+    textItem("OriginMind × ARTS Robotics 联合研发 OA", 8.5, { color: [0.38, 0.44, 0.46], gapAfter: 13 }),
+    textItem(title, 20, { align: "center", leading: 29, gapAfter: 8, keepWithNext: 35 }),
+    textItem(`${approval.type} · ${state}`, 9.5, { align: "center", color: [0.38, 0.44, 0.46], gapAfter: 10 }),
+    section("基本信息"),
+    fieldItem("联合项目", approval.project || "—"),
+    fieldItem(isAgreement ? "签署人" : "申请人", `${approval.requesterName}${approval.requesterEmail ? " · " + approval.requesterEmail : ""}`),
+    fieldItem(approval.status === "已归档" ? "归档时间" : "更新时间", displayDate(approval.updatedAt) + "（北京时间）"),
+  ];
+  if (!isAgreement) {
+    items.push(fieldItem("申请编号", approval.id), fieldItem("创建时间", displayDate(approval.createdAt)));
+    if (approval.owner) items.push(fieldItem("事项负责人", approval.owner));
+    if (approval.currentReviewerName) items.push(fieldItem("当前处理人", `${approval.currentReviewerName}${approval.currentReviewerEmail ? " · " + approval.currentReviewerEmail : ""}`));
+    if (approval.amount) items.push(fieldItem("金额", approval.amount));
+    if (approval.summary) items.push(section("事项摘要"), textItem(approval.summary, 10.5, { gapAfter: 8 }));
   }
-  if (!flattenPayload(approval.payload).length) items.push(textItem("无"));
-
+  if (isAgreement) {
+    items.push(section("协议正文"));
+    for (const paragraph of paragraphs.slice(1)) {
+      const metadata = !/^第[一二三四五六七八九十百\d]+条/u.test(paragraph);
+      items.push(textItem(paragraph, metadata ? 9.5 : 10.5, { leading: metadata ? 15 : 17.5, gapAfter: metadata ? 4 : 9 }));
+    }
+    items.push(textItem("本人确认已阅读上述正文，并以本人实名认证账户完成电子手写签署。", 9, { color: [0.38, 0.44, 0.46], gapAfter: 6 }));
+  }
+  if (Object.keys(mainPayload).length) items.push(section("申请数据"), ...payloadItems(mainPayload));
   if (approval.type === "保密协议" && typeof approval.payload.signatureDataUrl === "string") {
-    items.push(section("本人手写签名"));
-    items.push({ kind: "signature", gapAfter: 10 });
-    items.push(textItem(`签署人：${displayValue(approval.payload.signerName)}　签署时间：${displayValue(approval.payload.signedAt)}`, 9.5, { gapAfter: 12 }));
+    items.push(section("本人手写签名", { keepWithNext: 127 }));
+    items.push({ kind: "signature", gapAfter: 5 });
+    items.push(textItem(`签署人：${displayValue(approval.payload.signerName)}    签署时间：${displayDate(String(approval.payload.signedAt || ""))}（北京时间）`, 9, { gapAfter: 8 }));
+  } else if (isAgreement && typeof approval.payload.signedAt === "string") {
+    items.push(fieldItem("签署时间", displayDate(approval.payload.signedAt) + "（北京时间）"));
   }
-
-  items.push(section("签署与流转记录"));
-  if (!events.length) items.push(textItem("暂无流转记录。"));
-  for (const event of events) {
-    items.push(textItem(`${event.createdAt} · ${event.action}`, 10.5, { color: [0.09, 0.33, 0.31], gapAfter: 1 }));
-    items.push(textItem(`操作人：${event.actorName}（${event.actorEmail}）`, 9, { indent: 10, color: [0.35, 0.41, 0.44], gapAfter: 1 }));
-    items.push(textItem(`记录：${event.note || "无"}`, 9.5, { indent: 10, gapAfter: 7 }));
+  // Keep the readable document separate from its audit and verification appendix.
+  items.push(section("签署与流转记录", { pageBreakBefore: true, gapBefore: 0, keepWithNext: 55 }));
+  if (!events.length) items.push(textItem("暂无流转记录。", 9.5));
+  for (const [index, event] of events.entries()) {
+    items.push(textItem(`${index + 1}. ${approvalEventActionLabel(event.action)} · ${displayDate(event.createdAt)}`, 10, { color: [0.10, 0.28, 0.31], gapAfter: 3, keepWithNext: 34 }));
+    items.push(fieldItem("操作人", `${event.actorName}${event.actorEmail ? " · " + event.actorEmail : ""}`));
+    if (event.note) items.push(fieldItem("处理说明", event.note));
   }
-
+  if (isAgreement) {
+    items.push(section("原申请信息"), fieldItem("申请标题", approval.title), fieldItem("申请编号", approval.id), fieldItem("创建时间", displayDate(approval.createdAt)));
+    if (approval.summary) items.push(fieldItem("事项摘要", approval.summary));
+    if (approval.owner && approval.owner !== approval.requesterName) items.push(fieldItem("事项负责人", approval.owner));
+    if (approval.currentReviewerName) items.push(fieldItem("当前处理人", `${approval.currentReviewerName}${approval.currentReviewerEmail ? " · " + approval.currentReviewerEmail : ""}`));
+  }
+  if (Object.keys(auditPayload).length) items.push(section("签署与系统核验信息"), ...payloadItems(auditPayload));
   if (integrity) {
-    items.push(section("归档完整性校验"));
-    items.push(textItem(`归档结构版本：${integrity.schemaVersion}`));
-    items.push(textItem(`脱敏归档 SHA-256：${integrity.archiveHash}`, 8.5));
-    items.push(textItem(`原始证据记录 SHA-256：${integrity.evidenceRecordHash}`, 8.5));
-    items.push(textItem(`终局材料版本：${integrity.terminalRevisionNo === null ? "历史基线" : `第 ${integrity.terminalRevisionNo} 版`}`, 8.5));
-    if (integrity.terminalRevisionHash) items.push(textItem(`终局修订 SHA-256：${integrity.terminalRevisionHash}`, 8.5));
-    if (integrity.terminalStateHash) items.push(textItem(`终局材料 SHA-256：${integrity.terminalStateHash}`, 8.5));
+    items.push(section("归档完整性校验", { keepWithNext: 64 }));
+    items.push(fieldItem("归档结构版本", String(integrity.schemaVersion)));
+    items.push(fieldItem("终局材料版本", integrity.terminalRevisionNo === null ? "历史基线" : `第 ${integrity.terminalRevisionNo} 版`));
+    items.push(fieldItem("脱敏归档 SHA-256", integrity.archiveHash));
+    items.push(fieldItem("原始证据 SHA-256", integrity.evidenceRecordHash));
+    if (integrity.terminalRevisionHash) items.push(fieldItem("终局修订 SHA-256", integrity.terminalRevisionHash));
+    if (integrity.terminalStateHash) items.push(fieldItem("终局材料 SHA-256", integrity.terminalStateHash));
   }
-
-  items.push(textItem("本文件由 OriginMind × ARTS Robotics 联合研发 OA 自动生成。归档 PDF 与 OA 不可变材料版本、流转记录及校验值一一对应。", 8.5, { color: [0.38, 0.45, 0.47], gapAfter: 0 }));
+  items.push(textItem(integrity
+    ? "本文件由 OriginMind × ARTS Robotics 联合研发 OA 生成，正文、签署证据与不可变归档材料对应。核验信息用于校验原始记录；页面时间均为北京时间。"
+    : "本文件为当前审批版本，后续处理以 OA 中的记录为准；页面时间均为北京时间。", 8, { color: [0.42, 0.47, 0.49], gapBefore: 10, gapAfter: 0 }));
   return items;
 }
 
-function textUnits(value: string) {
-  let units = 0;
-  for (const character of value) units += /^[\u0000-\u00ff]$/u.test(character) ? 1 : 2;
-  return units;
+function characterWidth(character: string) {
+  const code = character.codePointAt(0) ?? 0x3f;
+  return embeddedFontSupports(character) ? PDF_EMBEDDED_FONT_WIDTHS[code] ?? 1000 : code >= 32 && code <= 126 ? 500 : 1000;
 }
 
-function splitLongToken(token: string, maximumUnits: number) {
-  const parts: string[] = [];
-  let current = "";
-  let units = 0;
-  for (const character of token) {
-    const characterUnits = /^[\u0000-\u00ff]$/u.test(character) ? 1 : 2;
-    if (current && units + characterUnits > maximumUnits) {
-      parts.push(current);
-      current = "";
-      units = 0;
-    }
-    current += character;
-    units += characterUnits;
-  }
-  if (current) parts.push(current);
-  return parts;
+function textWidth(value: string, size: number) {
+  return Array.from(value).reduce((width, character) => width + characterWidth(character) * size / 1000, 0);
 }
 
-function wrapText(value: string, maximumUnits: number) {
-  if (!value) return [""];
+function wrapText(value: string, maximumWidth: number, size: number) {
   const lines: string[] = [];
-  let current = "";
-  let units = 0;
-  for (const paragraph of value.split(/\n/u)) {
+  for (const paragraph of value.split("\n")) {
+    let line = "";
+    let width = 0;
     for (const character of paragraph) {
-      const characterUnits = /^[\u0000-\u00ff]$/u.test(character) ? 1 : 2;
-      if (current && units + characterUnits > maximumUnits) {
-        lines.push(current.trimEnd());
-        current = "";
-        units = 0;
+      const nextWidth = characterWidth(character) * size / 1000;
+      if (line && width + nextWidth > maximumWidth) {
+        // Avoid leading closing punctuation without overflowing the text column.
+        const closing = /^[，。；：！？、）】》」』,.!?;:)]$/u.test(character);
+        const last = Array.from(line).at(-1) || "";
+        const word = closing || /^[A-Za-z0-9]/u.test(character) ? line.match(/[A-Za-z0-9]+$/u)?.[0] : undefined;
+        if (word && line.length > word.length && textWidth(word + character, size) < maximumWidth / 2) {
+          lines.push(line.slice(0, -word.length).trimEnd());
+          line = word;
+          width = textWidth(word, size);
+        } else if (closing && line.length > last.length) {
+          lines.push(line.slice(0, -last.length).trimEnd());
+          line = last;
+          width = textWidth(last, size);
+        } else {
+          lines.push(line.trimEnd());
+          line = "";
+          width = 0;
+        }
       }
-      current += character;
-      units += characterUnits;
+      line += character;
+      width += nextWidth;
     }
-    lines.push(current.trimEnd());
-    current = "";
-    units = 0;
+    lines.push(line.trimEnd());
   }
-  if (lines.at(-1) === "" && value.at(-1) !== "\n") lines.pop();
-  return lines.flatMap((line) => textUnits(line) <= maximumUnits ? [line] : splitLongToken(line, maximumUnits));
+  return lines.length ? lines : [""];
+}
+
+function textLines(item: TextItem) {
+  return wrapText(item.text, PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT - (item.indent || 0), item.size);
+}
+
+function fieldLines(item: FieldItem) {
+  return {
+    labels: wrapText(item.label, FIELD_LABEL_WIDTH - 12, 9),
+    values: wrapText(item.value, PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT - FIELD_LABEL_WIDTH - (item.indent || 0), 9.5),
+  };
+}
+
+function shortHeader(value: string, maximumWidth: number) {
+  let text = "";
+  for (const character of cleanText(value)) {
+    if (textWidth(text + character + "…", 8) > maximumWidth) return text + "…";
+    text += character;
+  }
+  return text;
 }
 
 function unicodeHex(value: string) {
@@ -520,44 +656,76 @@ export async function buildApprovalPdf(input: ApprovalPdfInput) {
     pageItems.push([]);
     y = PAGE_TOP;
   };
-  for (const item of buildLayoutItems(input)) {
+
+  const layout = buildLayoutItems(input);
+  for (const [itemIndex, item] of layout.entries()) {
     if (item.kind === "signature") {
-      const needed = 90 + (item.gapAfter || 0);
-      if (y - needed < PAGE_BOTTOM) nextPage();
+      const needed = 96 + (item.gapAfter || 0);
+      if (y - needed < PAGE_BOTTOM && pageItems.at(-1)?.length) nextPage();
       pageItems.at(-1)?.push(item);
       y -= needed;
       continue;
     }
-    const indent = item.indent || 0;
-    const availableWidth = PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT - indent;
-    const maximumUnits = Math.max(12, Math.floor(availableWidth / (item.size * 0.54)));
-    const lines = wrapText(item.text, maximumUnits);
+    if (item.kind === "field") {
+      const { labels, values } = fieldLines(item);
+      const totalHeight = Math.max(labels.length, values.length) * FIELD_LEADING + (item.gapAfter || 0);
+      if (totalHeight <= (PAGE_TOP - PAGE_BOTTOM) / 2 && y - totalHeight < PAGE_BOTTOM && pageItems.at(-1)?.length) nextPage();
+      let offset = 0;
+      while (offset < values.length) {
+        let capacity = Math.floor((y - PAGE_BOTTOM - (item.gapAfter || 0)) / FIELD_LEADING);
+        if (capacity < Math.max(1, labels.length) && pageItems.at(-1)?.length) {
+          nextPage();
+          capacity = Math.floor((y - PAGE_BOTTOM - (item.gapAfter || 0)) / FIELD_LEADING);
+        }
+        const chunk = values.slice(offset, offset + Math.max(1, capacity));
+        const chunkItem = { ...item, label: offset ? item.label + "（续）" : item.label, value: chunk.join("\n") };
+        pageItems.at(-1)?.push(chunkItem);
+        y -= Math.max(fieldLines(chunkItem).labels.length, chunk.length) * FIELD_LEADING + (item.gapAfter || 0);
+        offset += chunk.length;
+        if (offset < values.length) nextPage();
+      }
+      continue;
+    }
+    if (item.pageBreakBefore && pageItems.at(-1)?.length) nextPage();
+    const lines = textLines(item);
+    const leading = item.leading || 15;
+    const ownHeight = (item.gapBefore || 0) + lines.length * leading + (item.gapAfter || 0);
+    const following = layout[itemIndex + 1];
+    let followingHeight = 0;
+    if (following?.kind === "field") {
+      const nextLines = fieldLines(following);
+      const nextHeight = Math.max(nextLines.labels.length, nextLines.values.length) * FIELD_LEADING + (following.gapAfter || 0);
+      followingHeight = nextHeight <= (PAGE_TOP - PAGE_BOTTOM) / 2 ? nextHeight : 2 * FIELD_LEADING + (following.gapAfter || 0);
+    } else if (following?.kind === "text") {
+      followingHeight = Math.min(2, textLines(following).length) * (following.leading || 15) + (following.gapBefore || 0) + (following.gapAfter || 0);
+    }
+    const keepHeight = item.keepWithNext ? Math.max(item.keepWithNext, followingHeight) : 0;
+    if (keepHeight && y - ownHeight - keepHeight < PAGE_BOTTOM && pageItems.at(-1)?.length) nextPage();
     let lineOffset = 0;
-    let firstChunk = true;
     while (lineOffset < lines.length) {
-      const leading = item.leading || 15;
-      const reserved = (lineOffset === lines.length - 1 ? item.gapAfter || 0 : 0) + (firstChunk && item.section ? 3 : 0);
-      let capacity = Math.floor((y - PAGE_BOTTOM - reserved) / leading);
-      if (capacity < 1 && pageItems.at(-1)?.length) {
+      const firstChunk = lineOffset === 0;
+      const before = firstChunk ? item.gapBefore || 0 : 0;
+      let capacity = Math.floor((y - PAGE_BOTTOM - before - (item.gapAfter || 0)) / leading);
+      if ((capacity < 1 || (capacity === 1 && lines.length - lineOffset > 1)) && pageItems.at(-1)?.length) {
         nextPage();
-        capacity = Math.floor((y - PAGE_BOTTOM - reserved) / leading);
+        capacity = Math.floor((y - PAGE_BOTTOM - before - (item.gapAfter || 0)) / leading);
       }
       capacity = Math.max(1, capacity);
+      if (lines.length - lineOffset - capacity === 1 && capacity > 1) capacity -= 1;
       const chunk = lines.slice(lineOffset, lineOffset + capacity);
       const chunkItem: TextItem = {
         ...item,
         text: chunk.join("\n"),
         section: firstChunk && item.section,
+        gapBefore: before,
         gapAfter: lineOffset + chunk.length >= lines.length ? item.gapAfter : 0,
       };
       pageItems.at(-1)?.push(chunkItem);
-      y -= chunk.length * leading + (chunkItem.gapAfter || 0) + (chunkItem.section ? 3 : 0);
+      y -= before + chunk.length * leading + (chunkItem.gapAfter || 0);
       lineOffset += chunk.length;
-      firstChunk = false;
       if (lineOffset < lines.length) nextPage();
     }
   }
-
   const imageObjectId = signature ? 11 : null;
   const firstPageObjectId = signature ? 12 : 11;
   const pageObjectIds = pageItems.map((_, index) => firstPageObjectId + index * 2);
@@ -566,14 +734,16 @@ export async function buildApprovalPdf(input: ApprovalPdfInput) {
   objects.set(1, objectBytes(1, "<< /Type /Catalog /Pages 2 0 R >>"));
   objects.set(2, objectBytes(2, `<< /Type /Pages /Count ${pageItems.length} /Kids [${pageObjectIds.map((id) => `${id} 0 R`).join(" ")}] >>`));
   objects.set(3, objectBytes(3, `<< /Type /Font /Subtype /Type0 /BaseFont /${PDF_EMBEDDED_FONT_NAME} /Encoding /Identity-H /DescendantFonts [4 0 R] /ToUnicode 8 0 R >>`));
-  objects.set(4, objectBytes(4, `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${PDF_EMBEDDED_FONT_NAME} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 5 0 R /CIDToGIDMap 7 0 R /DW 1000 /W [32 126 500] >>`));
+  objects.set(4, objectBytes(4, `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${PDF_EMBEDDED_FONT_NAME} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 5 0 R /CIDToGIDMap 7 0 R /DW 1000 /W [${Object.entries(PDF_EMBEDDED_FONT_WIDTHS).map(([code, width]) => `${code} [${width}]`).join(" ")}] >>`));
   objects.set(5, objectBytes(5, `<< /Type /FontDescriptor /FontName /${PDF_EMBEDDED_FONT_NAME} /Flags 4 /FontBBox [-1002 -1048 2928 1808] /ItalicAngle 0 /Ascent 1000 /Descent -200 /CapHeight 733 /StemV 80 /MissingWidth 1000 /FontFile2 6 0 R >>`));
   objects.set(6, streamObjectBytes(6, `/Filter /FlateDecode /Length1 ${PDF_EMBEDDED_FONT_LENGTH}`, embeddedFontCompressed()));
   objects.set(7, streamObjectBytes(7, "/Filter /FlateDecode", embeddedFontCidMapCompressed()));
+const continuationTitle = shortHeader(input.approval.title, PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT - 90);
+  const footerId = shortHeader(input.approval.id, 350);
   const toUnicodeText = pageItems.flatMap((items, pageIndex) => [
-    ...items.filter((item): item is TextItem => item.kind === "text").map((item) => item.text),
-    pageIndex > 0 ? `${input.approval.title} · 续页` : "",
-    input.approval.id,
+    ...items.flatMap((item) => item.kind === "text" ? [item.text] : item.kind === "field" ? [item.label, item.value] : []),
+    pageIndex > 0 ? continuationTitle : "",
+    footerId,
     `第 ${pageIndex + 1} / ${pageItems.length} 页`,
     "签名图像不可用于当前导出",
   ]);
@@ -587,31 +757,46 @@ export async function buildApprovalPdf(input: ApprovalPdfInput) {
   pageItems.forEach((items, pageIndex) => {
     let cursorY = PAGE_TOP;
     const commands: string[] = [];
-    if (pageIndex > 0) {
-      commands.push(textCommand(`${input.approval.title} · 续页`, 8, [0.36, 0.45, 0.46], PAGE_LEFT, 812));
+if (pageIndex > 0) {
+      commands.push(textCommand(continuationTitle, 8, [0.42, 0.47, 0.49], PAGE_LEFT, 813));
+      commands.push(`${PAGE_LEFT} 804 ${PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT} 0.5 re 0.85 0.88 0.89 rg f`);
     }
     for (const item of items) {
       if (item.kind === "signature") {
-        commands.push(`${pdfNumber(PAGE_LEFT)} ${pdfNumber(cursorY - 79)} 300 87 re 0.97 0.98 0.98 rg f`);
-        if (signature && imageObjectId) commands.push(`q 300 0 0 87 ${PAGE_LEFT} ${pdfNumber(cursorY - 79)} cm /Sig Do Q`);
-        else commands.push(textCommand("签名图像不可用于当前导出", 9, [0.45, 0.48, 0.49], PAGE_LEFT + 16, cursorY - 42));
-        cursorY -= 90 + (item.gapAfter || 0);
+        const bottom = cursorY - 90;
+        commands.push(`q 0.82 0.86 0.87 RG 0.6 w ${PAGE_LEFT} ${pdfNumber(bottom)} 320 96 re S Q`);
+        if (signature && imageObjectId) {
+          const width = 300;
+          const height = width * signature.height / signature.width;
+          commands.push(`q ${width} 0 0 ${pdfNumber(height)} ${PAGE_LEFT + 10} ${pdfNumber(bottom + (96 - height) / 2)} cm /Sig Do Q`);
+        } else {
+          commands.push(textCommand("签名图像不可用于当前导出", 9, [0.45, 0.48, 0.49], PAGE_LEFT + 16, cursorY - 42));
+        }
+        cursorY -= 96 + (item.gapAfter || 0);
         continue;
       }
-      const indent = item.indent || 0;
-      const availableWidth = PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT - indent;
-      const maximumUnits = Math.max(12, Math.floor(availableWidth / (item.size * 0.54)));
-      const lines = wrapText(item.text, maximumUnits);
-      if (item.section) commands.push(`${PAGE_LEFT - 5} ${pdfNumber(cursorY - lines.length * (item.leading || 15) + 3)} ${PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT + 10} ${pdfNumber(lines.length * (item.leading || 15) + 3)} re 0.93 0.97 0.96 rg f`);
+      if (item.kind === "field") {
+        const { labels, values } = fieldLines(item);
+        const x = PAGE_LEFT + (item.indent || 0);
+        labels.forEach((line, index) => commands.push(textCommand(line, 9, [0.38, 0.44, 0.46], x, cursorY - index * FIELD_LEADING)));
+        values.forEach((line, index) => commands.push(textCommand(line, 9.5, [0.12, 0.16, 0.19], x + FIELD_LABEL_WIDTH, cursorY - index * FIELD_LEADING)));
+        cursorY -= Math.max(labels.length, values.length) * FIELD_LEADING + (item.gapAfter || 0);
+        continue;
+      }
+      cursorY -= item.gapBefore || 0;
+      const lines = textLines(item);
+      if (item.section) commands.push(`${PAGE_LEFT} ${pdfNumber(cursorY - 7)} ${PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT} 0.5 re 0.82 0.87 0.88 rg f`);
       for (const line of lines) {
-        commands.push(textCommand(line, item.size, item.color, PAGE_LEFT + indent, cursorY));
+        const x = item.align === "center" ? (PAGE_WIDTH - textWidth(line, item.size)) / 2 : PAGE_LEFT + (item.indent || 0);
+        commands.push(textCommand(line, item.size, item.color, x, cursorY));
         cursorY -= item.leading || 15;
       }
-      cursorY -= (item.gapAfter || 0) + (item.section ? 3 : 0);
+      cursorY -= item.gapAfter || 0;
     }
-    commands.push(`${PAGE_LEFT} 43 ${PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT} 0.5 re 0.79 0.85 0.85 rg f`);
-    commands.push(textCommand(input.approval.id, 8, [0.40, 0.46, 0.48], PAGE_LEFT, 29));
-    commands.push(textCommand(`第 ${pageIndex + 1} / ${pageItems.length} 页`, 8, [0.40, 0.46, 0.48], 500, 29));
+    commands.push(`${PAGE_LEFT} 45 ${PAGE_WIDTH - PAGE_LEFT - PAGE_RIGHT} 0.5 re 0.82 0.87 0.88 rg f`);
+    commands.push(textCommand(footerId, 8, [0.42, 0.47, 0.49], PAGE_LEFT, 30));
+    const pageNumber = `第 ${pageIndex + 1} / ${pageItems.length} 页`;
+    commands.push(textCommand(pageNumber, 8, [0.42, 0.47, 0.49], PAGE_WIDTH - PAGE_RIGHT - textWidth(pageNumber, 8), 30));
     const content = ascii(commands.join("\n"));
     const resources = signature && imageObjectId ? `<< /Font << /F1 3 0 R /F2 9 0 R >> /XObject << /Sig ${imageObjectId} 0 R >> >>` : "<< /Font << /F1 3 0 R /F2 9 0 R >> >>";
     objects.set(pageObjectIds[pageIndex], objectBytes(pageObjectIds[pageIndex], `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources ${resources} /Contents ${contentObjectIds[pageIndex]} 0 R >>`));

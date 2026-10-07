@@ -1,3 +1,4 @@
+import { DELETED_KNOWLEDGE_ITEM_SQL } from "./knowledge-deletion-sql";
 import type { KnowledgeActor } from "./knowledge-store";
 
 function normalizeEmail(value: string) { return value.trim().toLowerCase(); }
@@ -15,6 +16,7 @@ export async function authorizeKnowledgeAssetRevision(
     JOIN members m ON m.id = ?
     WHERE i.id = ? AND i.current_revision_id = ?
       AND r.status = 'pending'
+      AND NOT ${DELETED_KNOWLEDGE_ITEM_SQL}
       AND ((i.status = 'pending' AND i.submitter_member_id = ? AND lower(i.submitter_email) = ?)
         OR (i.status = 'active' AND i.active_revision_id <> i.current_revision_id AND ? = 1
           AND r.created_by_member_id = ? AND lower(r.created_by_email) = ?))

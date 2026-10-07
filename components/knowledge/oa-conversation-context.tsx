@@ -114,7 +114,7 @@ function ConversationMenu({ aiChoices, onCreateGroup }: WorkspaceMenuProps) {
 }
 export function OaNewChatButton() {
   const { newAi } = useOaConversation();
-  return <button type="button" className="oa-sidebar-new-chat" aria-label="新建 AI 对话" onClick={newAi}><Plus size={18} />聊天</button>;
+  return <button type="button" className="oa-sidebar-new-chat oa-header-new-chat" aria-label="新建 AI 对话" title="新建 AI 对话" onClick={newAi}><Plus size={22} aria-hidden="true" /></button>;
 }
 
 function MemberPicker({ content, user, onClose, onSelect, onSent }: { content: ForwardContent | null; user: CurrentUser; onClose: () => void; onSelect: (peer: ConversationPeer) => void; onSent: (peer: ConversationPeer) => void }) {

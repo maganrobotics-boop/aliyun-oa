@@ -5,6 +5,7 @@ import { ArrowLeft, BookOpen, ChevronDown, HelpCircle, LogOut, Settings2, Slider
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { OaAccountProfile } from "./oa-account-profile";
 import "./oa-account-menu.css";
+import { OaInstallButton } from "./oa-pwa";
 
 export type OaAccountUser = { email: string; displayName: string; authProvider?: string };
 type Preferences = { largeText: boolean; compact: boolean; reduceMotion: boolean };
@@ -88,6 +89,7 @@ export function OaAccountMenu({ user, avatarDataUrl = "", roleLabel = "", onIden
         {panel === "menu" ? <>
           <div className="oa-account-identity"><span className="oa-account-avatar" aria-hidden="true">{avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : [...name][0]}</span><div><strong>{name}</strong><small>{roleLabel || "OA 成员"}</small></div></div>
           <div className="oa-account-actions">{items.map(({ label, icon: Icon, action }) => <button key={label} type="button" onClick={action}><Icon size={19} aria-hidden="true" />{label}</button>)}</div>
+          <div className="oa-account-actions"><OaInstallButton /></div>
           <div className="oa-account-divider" />
           <button className="oa-account-logout" type="button" disabled={loggingOut} onClick={() => void logout()}><LogOut size={19} aria-hidden="true" />{loggingOut ? "正在退出…" : "退出登录"}</button>
         </> : <>
@@ -115,9 +117,10 @@ export function OaLoginWorkspace({ user, loginContent, loading = false, children
   return <div className="oa-login-workspace">
     <header className="oa-login-header"><div className="oa-login-header-brand"><strong>机器人自主移动与操作实验室</strong><span>OriginMind × ARTS Robotics · 联合研发 OA</span></div><OaAccountMenu key={loading ? "loading" : user?.email || "guest"} user={user} loginContent={loginContent} loading={loading} defaultOpen={Boolean(user && loginContent)} openRequest={openRequest} /></header>
     {children ? <main className="oa-access-content">{children}</main> : <main className="oa-login-welcome">
-      <span className="oa-login-welcome-kicker">联合研发工作空间</span><h1>让工作有进展，让成果有记录。</h1><p>登录后跟进项目、处理审批、积累团队知识。</p>
+      <span className="oa-login-welcome-kicker">联合研发工作空间</span><h1>联合研发 OA</h1><p>登录后跟进项目、处理审批、积累团队知识。</p>
       <button type="button" className="oa-login-primary" disabled={loading} onClick={() => setOpenRequest(value => value + 1)}>{loading ? "正在加载登录方式…" : "登录 OA"}<ChevronDown size={16} /></button>
       <div className="oa-login-overview">{[{ title: "工作台", text: "任务进展与项目里程碑" }, { title: "审批", text: "申请办理与审核归档" }, { title: "资料库", text: "团队资料与知识积累" }, { title: "大模型", text: "内部问答与研发协作" }].map(item => <button type="button" key={item.title} disabled={loading} onClick={() => setOpenRequest(value => value + 1)}><strong>{item.title}</strong><span>{item.text}</span></button>)}</div>
+      <OaInstallButton className="oa-account-secondary" />
       <a className="oa-login-guide" href="/guide"><BookOpen size={17} />第一次使用？查看使用指南</a>
     </main>}
   </div>;

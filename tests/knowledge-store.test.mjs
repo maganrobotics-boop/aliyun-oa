@@ -74,9 +74,11 @@ const vite = await createServer({
     enforce: "pre",
     resolveId(source) {
       if (/^(?:\.\.\/)+db$/u.test(source)) return "\0knowledge-store-test-db";
+      if (source.endsWith("knowledge-assets-env")) return "\0knowledge-store-test-bucket";
       return null;
     },
     load(id) {
+      if (id === "\0knowledge-store-test-bucket") return `export async function getKnowledgeAssetsBucket() { return globalThis.${stateKey}.bucket; }`;
       if (id === "\0knowledge-store-test-db") return `
         export async function getD1Database() {
           return globalThis.${stateKey}.database;
@@ -99,6 +101,8 @@ const [migration, hardeningMigration, visibilityMigration, reclassificationMigra
   readFile(new URL("../drizzle/0030_large_knowledge_revision_parts.sql", import.meta.url), "utf8"),
 ]);
 
+const adminEventsFixture = await readFile(new URL('./fixtures/aliyun-knowledge-admin-events.sql', import.meta.url), 'utf8');
+
 function createDatabase() {
   const database = new DatabaseSync(":memory:");
   database.exec(`
@@ -119,6 +123,7 @@ function createDatabase() {
   database.exec(visibilityMigration);
   database.exec(reclassificationMigration);
   database.exec(revisionPartsMigration);
+  database.exec(adminEventsFixture);
   for (const member of [
     ["member-submit", "account-submit", "member-revision-submit", "member"],
     ["member-review", "account-review", "member-revision-review", "project_owner"],
@@ -499,14 +504,14 @@ test("管理列表关键词覆盖当前版本元数据、内联正文和 multipa
   }
 });
 
-test("管理列表先过滤全库再应用 100 条上限，并由 SQL 按更新时间排序", async () => {
+test("管理列表先过滤全库再应用 1000 条上限，并由 SQL 按更新时间排序", async () => {
   const targetId = insertKnowledgeListFixture({
     number: 2000,
     title: "唯一目标记录",
     content: "正文含有 needle-token",
     updatedAt: "2020-01-01T00:00:00.000Z",
   });
-  for (let index = 1; index <= 101; index += 1) {
+  for (let index = 1; index <= 1001; index += 1) {
     insertKnowledgeListFixture({
       number: 2000 + index,
       title: `无关记录 ${index}`,
@@ -519,20 +524,20 @@ test("管理列表先过滤全库再应用 100 条上限，并由 SQL 按更新�
 
   const newestFirst = await store.listKnowledgeItems("all", actor("reviewer"), true, { sort: "updated_desc" });
   const oldestFirst = await store.listKnowledgeItems("all", actor("reviewer"), true, { sort: "updated_asc" });
-  assert.equal(newestFirst.length, 100);
-  assert.equal(oldestFirst.length, 100);
+  assert.equal(newestFirst.length, 1000);
+  assert.equal(oldestFirst.length, 1000);
   assert.equal(oldestFirst[0].id, targetId);
   assert.ok(newestFirst.every((item, index) => index === 0 || item.updatedAt <= newestFirst[index - 1].updatedAt));
   assert.ok(oldestFirst.every((item, index) => index === 0 || item.updatedAt >= oldestFirst[index - 1].updatedAt));
 });
 
-test("标题按中文拼音对全匹配结果排序后再截取 100 条", async () => {
+test("标题按中文拼音对全匹配结果排序后再截取 1000 条", async () => {
   const firstId = insertKnowledgeListFixture({
     number: 3000,
     title: "阿尔法规范",
     updatedAt: "2020-01-01T00:00:00.000Z",
   });
-  for (let index = 1; index <= 100; index += 1) {
+  for (let index = 1; index <= 1000; index += 1) {
     insertKnowledgeListFixture({
       number: 3000 + index,
       title: `中间规范 ${index}`,
@@ -542,8 +547,8 @@ test("标题按中文拼音对全匹配结果排序后再截取 100 条", async 
 
   const ascending = await store.listKnowledgeItems("all", actor("reviewer"), true, { sort: "title_asc" });
   const descending = await store.listKnowledgeItems("all", actor("reviewer"), true, { sort: "title_desc" });
-  assert.equal(ascending.length, 100);
-  assert.equal(descending.length, 100);
+  assert.equal(ascending.length, 1000);
+  assert.equal(descending.length, 1000);
   assert.equal(ascending[0].id, firstId, "old but alphabetically first item must not be cut off before title sorting");
   assert.equal(descending.some((item) => item.id === firstId), false);
   const collator = new Intl.Collator("zh-CN-u-co-pinyin", { usage: "sort", sensitivity: "base", numeric: true });
@@ -1273,4 +1278,281 @@ test("问题预筛选不会让超过候选上限的旧文档尾部在内部或�
 
   assert.deepEqual(await store.getActiveKnowledgeChunks(actor("submitter"), "如何？"), []);
   assert.deepEqual(await store.getPublicActiveKnowledgeChunks("如何？"), []);
+});
+
+
+async function returnedDeletionFixture() {
+  const submitter = actor("submitter"), reviewer = actor("reviewer"), draft = submission();
+  const created = await store.createKnowledgeItem(submitter, draft, await policy.hashKnowledgeSubmission(draft));
+  await store.reviewKnowledgeItem(await store.findKnowledgeItem(created.id, reviewer), reviewer, "return", "请补充测试证据");
+  return await store.findKnowledgeItem(created.id, submitter);
+}
+test("owner deletes returned knowledge from lists while immutable revisions and audit remain", async () => {
+  const existing = await returnedDeletionFixture(), submitter = actor("submitter");
+  const before = await store.getKnowledgeItemDetail(existing.id, submitter, false);
+  assert.equal(await store.deleteReturnedKnowledgeItem(existing, submitter), true);
+  assert.equal((await store.listKnowledgeItems("mine", submitter, false)).length, 0);
+  assert.equal((await store.listKnowledgeItems("all", actor("reviewer"), true)).length, 0);
+  const after = await store.getKnowledgeItemDetail(existing.id, submitter, false);
+  assert.deepEqual(after.revisions, before.revisions);
+  assert.equal(after.events.length, before.events.length + 1);
+  assert.equal(after.events.at(-1).action, "revoked");
+  assert.equal(after.item.status, "returned");
+  assert.ok(after.item.revokedAt);
+  assert.equal(await store.findKnowledgeItem(existing.id, submitter), null);
+  assert.deepEqual(await store.getActiveKnowledgeChunks(submitter), []);
+  assert.equal(await store.deleteReturnedKnowledgeItem(existing, submitter), false);
+});
+test("returned knowledge deletion rejects non-owner, stale item and revoked account permissions", async () => {
+  const existing = await returnedDeletionFixture(), submitter = actor("submitter");
+  assert.equal(await store.deleteReturnedKnowledgeItem(existing, actor("reviewer")), false);
+  assert.equal(await store.deleteReturnedKnowledgeItem({ ...existing, mutation_revision: "stale" }, submitter), false);
+  globalThis[stateKey].sqlite.prepare("UPDATE members SET status='pending' WHERE id=?").run(submitter.memberId);
+  assert.equal(await store.deleteReturnedKnowledgeItem(existing, submitter), false);
+  assert.equal(globalThis[stateKey].sqlite.prepare("SELECT status FROM knowledge_items WHERE id=?").get(existing.id).status, "returned");
+});
+test("pending and approved knowledge cannot be deleted by its submitter", async () => {
+  const submitter = actor("submitter"), reviewer = actor("reviewer"), draft = submission();
+  const created = await store.createKnowledgeItem(submitter, draft, await policy.hashKnowledgeSubmission(draft));
+  let item = await store.findKnowledgeItem(created.id, submitter);
+  assert.equal(await store.deleteReturnedKnowledgeItem(item, submitter), false);
+  await store.reviewKnowledgeItem(item, reviewer, "approve", "通过", "internal");
+  item = await store.findKnowledgeItem(created.id, submitter);
+  assert.equal(await store.deleteReturnedKnowledgeItem(item, submitter), false);
+});
+
+test("own batch deletion withdraws every status and both retrieval scopes while preserving revisions", async () => {
+  const submitter = actor("submitter"), reviewer = actor("reviewer");
+  const entries = [];
+  for (const [index, status] of ["pending", "returned", "rejected", "active", "revoked", "active"].entries()) {
+    const draft = submission({ title: `批量删除资料 ${index}` });
+    const created = await store.createKnowledgeItem(submitter, draft, await policy.hashKnowledgeSubmission(draft));
+    let existing = await store.findKnowledgeItem(created.id, submitter);
+    if (status === "returned" || status === "rejected")
+      await store.reviewKnowledgeItem(existing, reviewer, status === "returned" ? "return" : "reject", "审核意见");
+    if (status === "active" || status === "revoked") {
+      await store.reviewKnowledgeItem(existing, reviewer, "approve", "通过", index === 3 ? "public" : "internal",
+        index === 3 ? policy.PUBLIC_KNOWLEDGE_CONFIRMATION : undefined);
+      if (status === "revoked") await store.reviewKnowledgeItem(await store.findKnowledgeItem(created.id, reviewer), reviewer, "revoke", "停止使用");
+    }
+    existing = await store.findKnowledgeItem(created.id, submitter);
+    const detail = await store.getKnowledgeItemDetail(created.id, submitter, false);
+    assert.equal(detail.item.canDelete, true);
+    entries.push({ id: created.id, mutationRevision: existing.mutation_revision, before: detail, row: existing });
+  }
+  assert.ok((await store.getActiveKnowledgeChunks(submitter)).length > 0);
+  assert.ok((await store.getPublicActiveKnowledgeChunks()).length > 0);
+  const result = await store.deleteOwnKnowledgeItems(entries.map(({ id, mutationRevision }) => ({ id, mutationRevision })), submitter);
+  assert.deepEqual(result, { deletedIds: entries.map(item => item.id), failed: [] });
+  for (const entry of entries) {
+    const after = await store.getKnowledgeItemDetail(entry.id, submitter, false);
+    assert.deepEqual(after.revisions, entry.before.revisions);
+    assert.equal(after.events.length, entry.before.events.length + 1);
+    assert.equal(after.events.at(-1).action, "revoked");
+    assert.equal(after.events.at(-1).note, "投稿人删除自己上传的资料");
+    assert.equal(after.item.canDelete, false);
+    assert.equal(after.item.status, entry.before.item.status === "active" ? "revoked" : entry.before.item.status);
+    assert.equal(after.item.activeRevisionId, undefined);
+    assert.equal(await store.findKnowledgeItem(entry.id, submitter), null);
+    assert.equal(await store.getKnowledgeItemDetail(entry.id, actor("reviewer"), false), null);
+    assert.equal(await store.reviewKnowledgeItem(entry.row, reviewer, "approve", "过期审核", "internal"), null);
+  }
+  assert.deepEqual(await store.listKnowledgeItems("mine", submitter, false), []);
+  assert.deepEqual(await store.listKnowledgeItems("review", reviewer, true), []);
+  assert.deepEqual(await store.listKnowledgeItems("all", reviewer, true, { query: "批量删除资料", sort: "title_asc" }), []);
+  assert.equal(await store.countPendingKnowledgeItems(reviewer), 0);
+  assert.deepEqual(await store.getActiveKnowledgeChunks(submitter), []);
+  assert.deepEqual(await store.getPublicActiveKnowledgeChunks(), []);
+  const repeat = await store.deleteOwnKnowledgeItems(entries.map(({ id, mutationRevision }) => ({ id, mutationRevision })), submitter);
+  assert.equal(repeat.deletedIds.length, 0);
+  assert.equal(repeat.failed.length, entries.length);
+});
+
+test("batch deletion only affects exact-owned current revisions and reports skipped entries", async () => {
+  const submitter = actor("submitter"), reviewer = actor("reviewer");
+  const ownDraft = submission({ title: "可以删除" }), staleDraft = submission({ title: "版本已变化" }), otherDraft = submission({ title: "他人资料" });
+  const own = await store.createKnowledgeItem(submitter, ownDraft, await policy.hashKnowledgeSubmission(ownDraft));
+  const stale = await store.createKnowledgeItem(submitter, staleDraft, await policy.hashKnowledgeSubmission(staleDraft));
+  const other = await store.createKnowledgeItem(reviewer, otherDraft, await policy.hashKnowledgeSubmission(otherDraft));
+  const input = [own, stale, other].map(item => ({ id: item.id, mutationRevision: item.mutationRevision }));
+  input[1].mutationRevision = "stale";
+  const beforeOther = await store.getKnowledgeItemDetail(other.id, reviewer, true);
+  const result = await store.deleteOwnKnowledgeItems(input, submitter);
+  assert.deepEqual(result.deletedIds, [own.id]);
+  assert.deepEqual(result.failed.map(item => item.id), [stale.id, other.id]);
+  assert.equal((await store.findKnowledgeItem(stale.id, submitter)).status, "pending");
+  assert.deepEqual(await store.getKnowledgeItemDetail(other.id, reviewer, true), beforeOther);
+  const adminAttempt = await store.deleteOwnKnowledgeItems([input[1]], { ...reviewer, isAdmin: true });
+  assert.equal(adminAttempt.deletedIds.length, 0);
+  for (const impersonation of [{ ...submitter, email: "other@example.com" }, { ...reviewer, email: submitter.email }]) {
+    assert.equal((await store.deleteOwnKnowledgeItems([{ id: stale.id, mutationRevision: stale.mutationRevision }], impersonation)).deletedIds.length, 0);
+  }
+});
+
+test("batch deletion checks live account identity, NDA and account revision inside the transaction", async () => {
+  const submitter = actor("submitter"), draft = submission();
+  const created = await store.createKnowledgeItem(submitter, draft, await policy.hashKnowledgeSubmission(draft));
+  const inputs = [{ id: created.id, mutationRevision: created.mutationRevision }];
+  assert.equal((await store.deleteOwnKnowledgeItems(inputs, { ...submitter, memberMutationRevision: "outdated" })).deletedIds.length, 0);
+  const sqlite = globalThis[stateKey].sqlite;
+  sqlite.prepare("UPDATE members SET status='pending' WHERE id=?").run(submitter.memberId);
+  assert.equal((await store.deleteOwnKnowledgeItems(inputs, submitter)).deletedIds.length, 0);
+  sqlite.prepare("UPDATE members SET status='active', nda_accepted_at=NULL WHERE id=?").run(submitter.memberId);
+  assert.equal((await store.deleteOwnKnowledgeItems(inputs, submitter)).deletedIds.length, 0);
+  assert.equal(sqlite.prepare("SELECT mutation_revision FROM knowledge_items WHERE id=?").get(created.id).mutation_revision, created.mutationRevision);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM knowledge_events WHERE action='revoked' AND note='投稿人删除自己上传的资料'").get().n, 0);
+});
+
+test("batch deletion rolls back withdrawal and events if any statement fails", async () => {
+  const submitter = actor("submitter"), draft = submission();
+  const created = await store.createKnowledgeItem(submitter, draft, await policy.hashKnowledgeSubmission(draft));
+  const before = await store.getKnowledgeItemDetail(created.id, submitter, false);
+  globalThis[stateKey].sqlite.exec("CREATE TRIGGER stop_delete BEFORE INSERT ON knowledge_events WHEN NEW.action='revoked' AND NEW.note='投稿人删除自己上传的资料' BEGIN SELECT RAISE(ABORT, 'test rollback'); END;");
+  await assert.rejects(() => store.deleteOwnKnowledgeItems([{ id: created.id, mutationRevision: created.mutationRevision }], submitter), /test rollback/u);
+  assert.deepEqual(await store.getKnowledgeItemDetail(created.id, submitter, false), before);
+});
+
+test("batch deletion rejects duplicate IDs and oversized batches before accessing records", async () => {
+  const submitter = actor("submitter"), draft = submission();
+  const created = await store.createKnowledgeItem(submitter, draft, await policy.hashKnowledgeSubmission(draft));
+  const input = { id: created.id, mutationRevision: created.mutationRevision };
+  await assert.rejects(() => store.deleteOwnKnowledgeItems([input, { ...input, id: input.id.toUpperCase() }], submitter), /invalid knowledge deletion/u);
+  await assert.rejects(() => store.deleteOwnKnowledgeItems(Array.from({ length: 21 }, () => input), submitter), /invalid knowledge deletion/u);
+  assert.ok(await store.findKnowledgeItem(created.id, submitter));
+});
+
+test("deleted pending knowledge cannot accept new attachment uploads", async () => {
+  const submitter = actor("submitter"), draft = submission();
+  const created = await store.createKnowledgeItem(submitter, draft, await policy.hashKnowledgeSubmission(draft));
+  const database = globalThis[stateKey].database;
+  const authorization = await vite.ssrLoadModule("/lib/knowledge-asset-authorization.ts");
+  const assets = await vite.ssrLoadModule("/lib/knowledge-assets.ts");
+  assert.equal(await authorization.authorizeKnowledgeAssetRevision(database, submitter, created.id, created.currentRevisionId), true);
+  await assets.requirePendingKnowledgeAssetRevision(database, created.id, created.currentRevisionId);
+  await store.deleteOwnKnowledgeItems([{ id: created.id, mutationRevision: created.mutationRevision }], submitter);
+  assert.equal(await authorization.authorizeKnowledgeAssetRevision(database, submitter, created.id, created.currentRevisionId), false);
+  await assert.rejects(() => assets.requirePendingKnowledgeAssetRevision(database, created.id, created.currentRevisionId), /not pending/u);
+});
+
+
+test('admin can edit pending uploads without approving, changing ownership or losing history', async () => {
+  const original = submission(), owner = actor('submitter'), admin = { ...actor('reviewer'), isAdmin: true };
+  const created = await store.createKnowledgeItem(owner, original, await policy.hashKnowledgeSubmission(original));
+  const before = await store.findKnowledgeItem(created.id, admin, true);
+  const next = { ...original, title: '管理员修改的题目', content: '管理员核对后的完整正文，说明实验室设备的操作方法。' };
+  const updated = await store.adminUpdateKnowledgeItem(before, admin, next, await policy.hashKnowledgeSubmission(next));
+  assert.equal(updated.title, next.title);
+  const current = await store.findKnowledgeItem(created.id, admin, true);
+  assert.equal(current.content, next.content);
+  assert.equal(current.status, 'pending');
+  assert.equal(current.visibility, before.visibility);
+  assert.equal(current.active_revision_id, null);
+  assert.equal(current.submitter_member_id, before.submitter_member_id);
+  const detail = await store.getKnowledgeItemDetail(created.id, admin, true);
+  assert.equal(detail.revisions.length, 2);
+  assert.equal(detail.revisions[1].content, original.content);
+  assert.equal(detail.events.at(-1).action, 'admin_edited');
+  assert.equal(detail.item.canAdminEdit, true);
+  assert.equal((await store.getKnowledgeItemDetail(created.id, owner, false)).item.canAdminEdit, false);
+  assert.equal(globalThis[stateKey].sqlite.prepare('SELECT COUNT(*) AS n FROM knowledge_chunks WHERE is_active=1').get().n, 0);
+});
+
+test('admin edits approved large content atomically and rebuilds retrieval while retaining visibility', async () => {
+  const owner = actor('submitter'), admin = { ...actor('reviewer'), isAdmin: true };
+  const original = submission();
+  const created = await store.createKnowledgeItem(owner, original, await policy.hashKnowledgeSubmission(original));
+  const pending = await store.findKnowledgeItem(created.id, admin, true);
+  await store.reviewKnowledgeItem(pending, admin, 'approve', '核对通过', 'internal');
+  const before = await store.findKnowledgeItem(created.id, admin, true);
+  const next = { ...original, title: '新检索题目', content: ('激光导航实验参数由系统管理员修订。\n\n').repeat(1600) };
+  const updated = await store.adminUpdateKnowledgeItem(before, admin, next, await policy.hashKnowledgeSubmission(next), policy.splitKnowledgeStorageParts(next.content));
+  assert.ok(updated);
+  const current = await store.findKnowledgeItem(created.id, admin, true);
+  assert.equal(current.content, next.content);
+  assert.equal(current.status, 'active');
+  assert.equal(current.visibility, 'internal');
+  assert.equal(current.current_revision_id, current.active_revision_id);
+  assert.notEqual(current.active_revision_id, before.active_revision_id);
+  assert.ok(Number(current.content_part_count) > 1);
+  const chunks = globalThis[stateKey].sqlite.prepare('SELECT revision_id, search_text FROM knowledge_chunks WHERE item_id=? AND is_active=1').all(created.id);
+  assert.ok(chunks.length);
+  assert.ok(chunks.every(chunk => chunk.revision_id === current.current_revision_id && chunk.search_text.includes('激光导航')));
+});
+
+test('admin edits reject other roles, stale versions and revoked account snapshots without extra revisions', async () => {
+  const original = submission(), admin = { ...actor('reviewer'), isAdmin: true };
+  const created = await store.createKnowledgeItem(actor('submitter'), original, await policy.hashKnowledgeSubmission(original));
+  const before = await store.findKnowledgeItem(created.id, admin, true);
+  const next = { ...original, title: '后续修改题目' }, hash = await policy.hashKnowledgeSubmission(next);
+  assert.equal(await store.adminUpdateKnowledgeItem(before, actor('reviewer'), next, hash), null);
+  assert.equal(await store.adminUpdateKnowledgeItem({ ...before, mutation_revision: 'stale' }, admin, next, hash), null);
+  globalThis[stateKey].sqlite.prepare("UPDATE members SET mutation_revision='changed' WHERE id=?").run(admin.memberId);
+  assert.equal(await store.adminUpdateKnowledgeItem(before, admin, next, hash), null);
+  assert.equal(globalThis[stateKey].sqlite.prepare('SELECT COUNT(*) AS n FROM knowledge_revisions WHERE item_id=?').get(created.id).n, 1);
+});
+
+test('admin edits preserve immutable ready image bytes and block unuploaded references', async () => {
+  const sqlite = globalThis[stateKey].sqlite;
+  for (const name of ['0031_knowledge_assets.sql', '0032_knowledge_asset_upload_state.sql', '0033_knowledge_asset_finalization.sql']) {
+    sqlite.exec(await readFile(new URL('../drizzle/' + name, import.meta.url), 'utf8'));
+  }
+  sqlite.exec(await readFile(new URL('./fixtures/aliyun-knowledge-image-staging.sql', import.meta.url), 'utf8'));
+  const assetModule = await vite.ssrLoadModule('/lib/knowledge-assets.ts');
+  const bytes = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64'));
+  const sha = await assetModule.knowledgeAssetSha256(bytes.buffer);
+  const original = submission({ content: '完整的实验室图片说明。\n![原图](assets/one.png)' }), admin = { ...actor('reviewer'), isAdmin: true };
+  const created = await store.createKnowledgeItem(actor('submitter'), original, await policy.hashKnowledgeSubmission(original));
+  const key = assetModule.knowledgeAssetStorageKey(created.id, created.currentRevisionId, 'assets/one.png');
+  const objects = new Map([[key, { bytes, customMetadata: { sha256: sha, uploadToken: 'upload-original' } }]]);
+  globalThis[stateKey].bucket = {
+    async get(key) { const o = objects.get(key); return o ? { ...o, size: o.bytes.byteLength, arrayBuffer: async () => o.bytes.slice().buffer } : null; },
+    async put(key, bytes, options) {
+      if (objects.has(key)) return null;
+      objects.set(key, { bytes: new Uint8Array(bytes).slice(), customMetadata: options.customMetadata });
+      return { key };
+    },
+    async delete(key) { objects.delete(key); },
+  };
+  sqlite.prepare("INSERT INTO knowledge_revision_assets VALUES ('asset-old',?,?, 'assets/one.png',?,'image/png',?,?,'2026-09-01','upload-original','ready')")
+    .run(created.id, created.currentRevisionId, key, bytes.byteLength, sha);
+  const before = await store.findKnowledgeItem(created.id, admin, true);
+  const next = { ...original, title: '修改后的图片题目', content: original.content.replace('原图', '修改后的图片说明') };
+  const saved = await store.adminUpdateKnowledgeItem(before, admin, next, await policy.hashKnowledgeSubmission(next));
+  assert.ok(saved);
+  const images = sqlite.prepare('SELECT * FROM knowledge_revision_assets WHERE item_id=? ORDER BY created_at').all(created.id);
+  assert.equal(images.length, 2);
+  assert.equal(new Set(images.map(image => image.storage_key)).size, 2);
+  assert.ok(images.every(image => image.sha256 === sha && image.upload_state === 'ready'));
+  for (const image of images) assert.deepEqual(objects.get(image.storage_key).bytes, bytes);
+  const current = await store.findKnowledgeItem(created.id, admin, true);
+  const missing = { ...next, content: next.content.replace('one.png', 'missing.png') };
+  await assert.rejects(store.adminUpdateKnowledgeItem(current, admin, missing, await policy.hashKnowledgeSubmission(missing)), /未上传/);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM knowledge_revisions WHERE item_id=?').get(created.id).n, 2);
+  assert.equal(objects.size, 2);
+});
+
+test('admin save rolls back every revision and index change when audit insertion fails', async () => {
+  const original = submission(), admin = { ...actor('reviewer'), isAdmin: true };
+  const created = await store.createKnowledgeItem(actor('submitter'), original, await policy.hashKnowledgeSubmission(original));
+  const before = await store.findKnowledgeItem(created.id, admin, true);
+  globalThis[stateKey].sqlite.exec("CREATE TRIGGER fail_admin_audit BEFORE INSERT ON knowledge_events WHEN NEW.action='admin_edited' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");
+  const next = { ...original, title: '待保存的新题目' };
+  await assert.rejects(store.adminUpdateKnowledgeItem(before, admin, next, await policy.hashKnowledgeSubmission(next)), /audit unavailable/);
+  const current = await store.findKnowledgeItem(created.id, admin, true);
+  assert.equal(current.title, original.title); assert.equal(current.mutation_revision, before.mutation_revision);
+  assert.equal(globalThis[stateKey].sqlite.prepare('SELECT COUNT(*) AS n FROM knowledge_revisions WHERE item_id=?').get(created.id).n, 1);
+});
+
+test('administrator replacement packages keep large body parts before activating the new version', async () => {
+  const original = submission(), admin = { ...actor('reviewer'), isAdmin: true };
+  const created = await store.createKnowledgeItem(actor('submitter'), original, await policy.hashKnowledgeSubmission(original));
+  await store.reviewKnowledgeItem(await store.findKnowledgeItem(created.id, admin, true), admin, 'approve', '已核对', 'internal');
+  const active = await store.findKnowledgeItem(created.id, admin, true);
+  const next = { ...original, content: '管理员重新上传并核对的大文档。\n'.repeat(1700) };
+  await store.stageAdminKnowledgeEdit(active, admin, next, await policy.hashKnowledgeSubmission(next), policy.splitKnowledgeStorageParts(next.content));
+  const staged = await store.findKnowledgeItem(created.id, admin, true);
+  assert.equal(staged.content, next.content); assert.equal(staged.active_revision_id, active.active_revision_id);
+  const activated = await store.activateAdminKnowledgeEdit(staged, admin);
+  assert.equal(activated.status, 'active');
+  assert.equal((await store.findKnowledgeItem(created.id, admin, true)).content, next.content);
 });

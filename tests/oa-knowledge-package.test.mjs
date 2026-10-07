@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateRawSync } from 'node:zlib';
-import { PACKAGE_LIMITS, normalizePackagePath, prepareKnowledgePackage, unpackKnowledgeZip, submitKnowledgePackage } from '../lib/knowledge-package.mjs';
+import { PACKAGE_LIMITS, normalizePackagePath, prepareKnowledgePackage, unpackKnowledgeZip, submitKnowledgePackage, reviseKnowledgePackage } from '../lib/knowledge-package.mjs';
 import { isKnowledgeUploadOrigin } from '../lib/knowledge-upload-origin.ts';
 
 const png = new Uint8Array([137,80,78,71,13,10,26,10,0,0,0,0]);
@@ -39,8 +39,45 @@ test('encrypted ZIP is rejected', async () => { await assert.rejects(unpackKnowl
 test('ZIP symbolic links are rejected', async () => { await assert.rejects(unpackKnowledgeZip(zip([['index.md', markdown]], { mode: 0xa000 })), /符号链接/); });
 test('ZIP path traversal and duplicate file names are rejected', async () => { await assert.rejects(unpackKnowledgeZip(zip([['../index.md', markdown]])), /不安全/); await assert.rejects(unpackKnowledgeZip(zip([['index.md', markdown], ['INDEX.md', markdown]])), /重复/); });
 test('truncated ZIP cannot be parsed', async () => { await assert.rejects(unpackKnowledgeZip(new File(['abc'], 'bad.zip')), /损坏/); });
-test('OA same-origin and the existing Chat origin are allowed without widening to third parties', () => { for (const origin of ['https://oa.omindos.ai', 'https://chat.omindos.ai']) assert.equal(isKnowledgeUploadOrigin(new Request('https://oa.omindos.ai/api/knowledge/assets', { headers: { origin } })), true); for (const origin of ['null', 'https://evil.test', 'https://oa.omindos.ai.evil.test']) assert.equal(isKnowledgeUploadOrigin(new Request('https://oa.omindos.ai/api/knowledge/assets', { headers: { origin } })), false); assert.equal(isKnowledgeUploadOrigin(new Request('https://oa.omindos.ai/api/knowledge/assets')), false); });
+test('OA same-origin and the existing Chat origin are allowed without widening to third parties', () => { for (const origin of ['https://oa.omindos.cn', 'https://chat.omindos.cn']) assert.equal(isKnowledgeUploadOrigin(new Request('https://oa.omindos.cn/api/knowledge/assets', { headers: { origin } })), true); for (const origin of ['null', 'https://evil.test', 'https://oa.omindos.cn.evil.test']) assert.equal(isKnowledgeUploadOrigin(new Request('https://oa.omindos.cn/api/knowledge/assets', { headers: { origin } })), false); assert.equal(isKnowledgeUploadOrigin(new Request('https://oa.omindos.cn/api/knowledge/assets')), false); });
 test('submit uses one pending document, same-origin credentials, every image, then finalizes; never approves', async () => { const calls = []; const pkg = await prepareKnowledgePackage(sample()); const result = await submitKnowledgePackage(pkg, { fetcher: async (url, init) => { calls.push([url, init]); return calls.length === 1 ? accepted() : goodResponse({}); } }); assert.equal(result.item.status, 'pending'); assert.deepEqual(calls.map(c => c[0]), ['/api/knowledge/import-chat', '/api/knowledge/assets', '/api/knowledge/assets/finalize']); assert.ok(calls.every(([, init]) => init.credentials === 'same-origin')); assert.deepEqual(JSON.parse(calls[2][1].body).expectedPaths, ['assets/one.png']); assert.ok(calls.every(([, init]) => init.method !== 'PATCH')); });
 test('administrator replacement uploads every image before atomically activating the new version', async () => { const calls = []; const pkg = await prepareKnowledgePackage(sample()); await submitKnowledgePackage(pkg, { adminKnowledgeItemId: 'item-live', fetcher: async (url, init) => { calls.push([url, init]); if (url === '/api/knowledge/import-chat') return goodResponse({ item: { id: 'item-live', mutationRevision: 'mutation-next' }, assetUpload: { revisionId: 'revision-next', uploadToken: 'token-next' } }); if (url === '/api/knowledge/item-live') return Response.json({ item: { id: 'item-live', status: 'active' } }); return goodResponse({}); } }); assert.deepEqual(calls.map(call => call[0]), ['/api/knowledge/import-chat', '/api/knowledge/assets', '/api/knowledge/assets/finalize', '/api/knowledge/item-live']); assert.equal(JSON.parse(calls[0][1].body).adminKnowledgeItemId, 'item-live'); assert.deepEqual(JSON.parse(calls[3][1].body), { action: 'activate_admin_edit', mutationRevision: 'mutation-next' }); });
 test('image failure never reports complete; retry retains the same document identity', async () => { const pkg = await prepareKnowledgePackage(sample()); const ids = []; let failImage = true; const fetcher = async (url, init) => { if (url.endsWith('import-chat')) { ids.push(JSON.parse(init.body).document.id); return accepted(); } if (url.endsWith('/assets') && failImage) return Response.json({ error: '图片失败' }, { status: 503 }); return goodResponse({}); }; await assert.rejects(submitKnowledgePackage(pkg, { fetcher }), /图片失败/); failImage = false; await submitKnowledgePackage(pkg, { fetcher }); assert.deepEqual(ids, [pkg.id, pkg.id]); });
 test('returned documents carry only the explicit returned item id', async () => { const pkg = await prepareKnowledgePackage(sample()); let first; await submitKnowledgePackage(pkg, { returnedKnowledgeItemId: 'returned-one', fetcher: async (url, init) => { if (url.endsWith('import-chat')) { first = JSON.parse(init.body); return accepted(); } return goodResponse({}); } }); assert.equal(first.returnedKnowledgeItemId, 'returned-one'); assert.equal(first.document.body, markdown); assert.equal(first.document.visibility, undefined); });
+
+
+import { knowledgeImageReferences, updateKnowledgeImageDescription } from '../lib/knowledge-image-references.mjs';
+
+test('edited title, prose and image description are the actual submitted payload', async () => {
+  const original = await prepareKnowledgePackage(sample());
+  const body = updateKnowledgeImageDescription(original.body + '\n补充人工核对的设备型号。', 'assets/one.png', '新图片说明：实验室平台');
+  const edited = await reviseKnowledgePackage(original, { title: '人工修改的题目', body });
+  const calls = [];
+  await submitKnowledgePackage(edited, { fetcher: async (url, init) => { calls.push([url, init]); return url.endsWith('import-chat') ? accepted() : goodResponse({}); } });
+  assert.equal(JSON.parse(calls[0][1].body).document.title, '人工修改的题目');
+  assert.equal(JSON.parse(calls[0][1].body).document.body, body);
+  assert.equal(edited.images[0].alt, '新图片说明：实验室平台');
+  assert.equal(calls[1][1].body, original.images[0].file);
+  assert.equal(original.body, markdown);
+});
+
+test('editing references retains selected unused images, drops removed references and rejects missing images', async () => {
+  const original = await prepareKnowledgePackage([...sample(), new File([png], 'assets/two.png')]);
+  const edited = await reviseKnowledgePackage(original, { title: original.title, body: '# 新正文\n完整的实验说明和公式。\n![第二张图](assets/two.png)' });
+  assert.deepEqual(edited.images.map(image => image.path), ['assets/two.png']);
+  assert.deepEqual(edited.unusedPaths, ['assets/one.png']);
+  await assert.rejects(reviseKnowledgePackage(original, { title: original.title, body: markdown.replace('one.png', 'missing.png') }), /未上传/);
+  await assert.rejects(reviseKnowledgePackage(original, { title: original.title, body: markdown.replace('one.png', '../one.png') }), /路径不合法/);
+});
+
+test('image descriptions preserve Markdown targets and HTML attributes, excluding code examples', () => {
+  const example = '```md\n![示例](assets/one.png)\n```';
+  const input = '![旧说明](assets/one.png "标题")\n<img src="assets/one.png" width="120" data-alt="旧值" alt="旧说明"/>\n' + example;
+  const edited = updateKnowledgeImageDescription(input, 'assets/one.png', '新说明 $1 [中文] & "引号"');
+  assert.ok(edited.includes('(assets/one.png "标题")'));
+  assert.ok(edited.includes('width="120" data-alt="旧值"'));
+  assert.ok(edited.endsWith(example));
+  assert.equal(knowledgeImageReferences(edited).get('assets/one.png'), '新说明 $1 ［中文］ & "引号"');
+  const noAlt = updateKnowledgeImageDescription('<img src="assets/one.png" data-alt="旧值"/>', 'assets/one.png', '添加说明');
+  assert.equal(knowledgeImageReferences(noAlt).get('assets/one.png'), '添加说明');
+});

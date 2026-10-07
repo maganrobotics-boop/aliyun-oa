@@ -1,3 +1,4 @@
+import { financeIdentities } from '../../../lib/finance-identities.mjs';
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { getDb } from "../../../db";
@@ -372,6 +373,37 @@ export async function getAuthorizedUser(options: AuthenticationReadOptions = {})
   };
 }
 
+/** Bot identities are never website login credentials. Only the signed bot
+ * bridge may use this resolver after reading an explicitly confirmed link.
+ * Unlike browser bootstrap, even administrators need a live matching member.
+ */
+export async function getAuthorizedIntegrationMember(memberId: string, accountUserId: string) {
+  if (!memberId || !accountUserId) return null;
+  const db = await getDb();
+  const [member] = await db.select().from(members).where(and(
+    eq(members.id, memberId), eq(members.accountUserId, accountUserId), eq(members.status, "active"),
+  )).limit(1);
+  if (!member || member.accountBindingPreviousStatus || !member.mutationRevision) return null;
+  const email = normalizeAccountEmail(member.chatgptAccount);
+  const isAdmin = isAdministrator(email, accountUserId);
+  const permissions = parseMemberPermissions(member.role, member.permissionsJson);
+  const role = isAdmin || isProjectOwner(email, accountUserId) || permissions.includes("project_owner")
+    ? "project_owner" : isFinanceOwner(email, accountUserId) ? "finance_owner"
+      : permissions.includes("technical_advisor") ? "technical_advisor" : "member";
+  // Administrators are exempt from NDA in the existing Aliyun OA policy.
+  const nda: { completed: boolean; acceptedAt?: string; approvalId?: string; agreementVersion?: string } = isAdmin
+    ? { completed: true } : await resolveNdaAcceptance(email, accountUserId, role, member, { noTouch: true });
+  return {
+    user: { email, displayName: member.fullName, authProvider: "wecom_bot" as const },
+    role, accountUserId, memberId: member.id, memberMutationRevision: member.mutationRevision,
+    isAdmin, isFinanceOwner: isFinanceOwner(email, accountUserId), ndaCompleted: nda.completed,
+    canReviewMembers: canReviewMemberRegistrations(isAdmin), canReviewKnowledge: isAdmin || role === "project_owner",
+    canGrantMemberPermissions: isAdmin,
+    ndaAcceptedAt: nda.acceptedAt, ndaApprovalId: nda.approvalId, ndaAgreementVersion: nda.agreementVersion,
+  };
+}
+
+
 /**
  * SQL-time guard for business writes.  Non-admin authorization is tied to the
  * exact member revision observed during authentication, so a concurrent
@@ -556,7 +588,7 @@ function configuredPrivilegedRoles() {
   const roles = [
     { role: "管理员" as const, entries: configuredRoleEntries("管理员", "OA_ADMIN_EMAILS", "OA_ADMIN_NAMES", true) },
     { role: "项目负责人" as const, entries: configuredRoleEntries("项目负责人", "OA_PROJECT_OWNER_EMAILS", "OA_PROJECT_OWNER_NAMES") },
-    { role: "经费负责人" as const, entries: configuredRoleEntries("经费负责人", "OA_FINANCE_OWNER_EMAILS", "OA_FINANCE_OWNER_NAMES") },
+    { role: "经费负责人" as const, entries: [...configuredRoleEntries("经费负责人", "OA_FINANCE_OWNER_EMAILS", "OA_FINANCE_OWNER_NAMES"), ...financeIdentities(process.env.OA_FINANCE_IDENTITIES_JSON)] },
   ];
   const identitiesByEmail = new Map<string, { accountUserId: string; displayName: string; role: ConfiguredRoleName }>();
   const identitiesById = new Map<string, { email: string; displayName: string; role: ConfiguredRoleName }>();

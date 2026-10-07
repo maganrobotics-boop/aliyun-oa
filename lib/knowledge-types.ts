@@ -42,6 +42,7 @@ export type KnowledgeItem = {
   canRevoke?: boolean;
   canSetVisibility?: boolean;
   canAdminEdit?: boolean;
+  canDelete?: boolean;
 };
 
 export type KnowledgeRevision = {

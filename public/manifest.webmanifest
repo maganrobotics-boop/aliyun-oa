@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "OriginMind × ARTS Robotics 联合研发 OA",
+  "short_name": "联合研发 OA",
+  "description": "项目审批、研发协作与知识归档",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0C79D8",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/pwa/icon-192-v2.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-512-v2.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-maskable-512-v2.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

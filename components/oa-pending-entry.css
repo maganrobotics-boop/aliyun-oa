@@ -1,0 +1,28 @@
+/* Shared count and destination for every admitted OA member. */
+.oa-app .oa-global-pending { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex-shrink: 0; margin-left: auto; min-height: 42px; padding: 8px 12px; border: 1px solid #ccddec; border-radius: 10px; background: #f3f8fd; color: #215d96; font-size: 13px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.oa-global-pending svg { width: 17px; height: 17px; }
+.oa-pending-count { display: inline-flex; align-items: center; justify-content: center; min-width: 23px; min-height: 23px; padding: 1px 6px; border-radius: 20px; background: #e1ebf5; color: #345775; font-size: 12px; font-variant-numeric: tabular-nums; font-style: normal; }
+.oa-pending-count.has-pending, .oa-global-pending.has-pending .oa-pending-count { color: #fff; background: #c34739; }
+.sidebar-nav-item .oa-pending-count { margin-left: auto; }
+.oa-pending-banner { display: flex; align-items: center; gap: 14px; width: 100%; margin: 18px 0 6px; padding: 18px 20px; text-align: left; border: 1px solid #cbdff1; border-radius: 13px; background: #f1f7fc; color: #214d72; cursor: pointer; }
+.oa-pending-banner > svg { flex-shrink: 0; width: 23px; height: 23px; }
+.oa-pending-banner-copy { flex: 1; min-width: 0; }
+.oa-pending-banner-copy > strong { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; font-size: 17px; }
+.oa-pending-banner-copy > small { display: block; margin-top: 5px; color: #61768b; font-size: 12px; line-height: 1.6; }
+.oa-pending-banner-action { display: flex; align-items: center; gap: 5px; flex-shrink: 0; font-size: 13px; font-weight: 650; }
+.oa-pending-banner-action svg { width: 17px; }
+.oa-global-pending:focus-visible,.oa-pending-banner:focus-visible { outline: 3px solid #729be1; outline-offset: 3px; }
+.oa-primary-navigation > button { position: relative; }
+.oa-primary-navigation .oa-nav-pending { position: absolute; top: 0; left: calc(50% + 7px); min-width: 19px; min-height: 19px; padding: 0 4px; background: #c34739; color: #fff; font-size: 10px; border: 2px solid #fff; }
+@media (max-width: 640px) {
+  .oa-app .oa-global-pending { gap: 5px; min-height: 40px; padding: 7px 9px; font-size: 12px; }
+  .oa-app .oa-global-pending > svg { display: none; }
+  .oa-app .topbar, .oa-app .oa-model-chat-header { gap: 8px; }
+  .oa-app .oa-topbar-secondary-title, .oa-app .oa-model-chat-title { min-width: 0; flex: 1; }
+  .oa-app .oa-topbar-secondary-title .oa-lab-title { display: none; }
+  .oa-app .oa-model-chat-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .oa-pending-banner { padding: 14px 12px; gap: 9px; margin-top: 12px; }
+  .oa-pending-banner-copy > strong { font-size: 16px; }
+  .oa-pending-banner > svg { display: none; }
+  .oa-pending-banner-action { font-size: 12px; }
+}

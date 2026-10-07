@@ -4,3 +4,11 @@
 
 .project-milestone-form input[type=date]{border:1px solid #d9e2ea;padding:8px;border-radius:8px;background:#fff;min-width:0;width:100%}
 .project-milestone-history{font-size:12px;color:#60768b;margin:12px 0}.project-milestone-history>summary{cursor:pointer;padding:5px 0}.project-milestone-history>p{line-height:1.6;padding-top:8px}.project-milestone-history ol{padding-left:18px;display:grid;gap:12px;margin-top:10px}.project-milestone-history li>span,.project-milestone-history li>small{display:block;font-size:11px;line-height:1.7}.project-milestone-history li details{margin-top:5px}.project-milestone-history li p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}
+
+
+/* Unified todos use the same milestone editor as the project workspace. */
+.project-milestone-card .project-milestone-title-button{display:block;width:100%;padding:0;background:transparent;color:inherit;font:inherit;text-align:left;line-height:inherit;min-height:32px}
+.project-milestone-card>header .project-milestone-status-control{flex:0 0 auto}
+.project-milestone-status-control>button,.project-milestone-status-control>strong{display:inline-flex;align-items:center;min-height:36px;padding:6px 10px;border-radius:8px;background:#eef4f9;color:#35688c;font-size:12px;white-space:nowrap}
+.project-milestone-form input[type=month]{border:1px solid #d9e2ea;padding:8px;border-radius:8px;background:#fff;min-width:0;width:100%}
+@media(max-width:600px){.project-milestone-card>header .project-milestone-status-control{flex-basis:100%;margin-left:28px}.project-task>.project-status{grid-column:2;white-space:nowrap}}

@@ -10,8 +10,8 @@ test("requires reviewers to choose internal or public before approving knowledge
   const source = await readFile(path.join(root, "components/knowledge/knowledge-view.tsx"), "utf8");
 
   assert.match(source, /KnowledgeVisibility,[\s\S]*?from "@\/lib\/knowledge-types"/u);
-  assert.match(source, /value="internal"[\s\S]*?>对内</u);
-  assert.match(source, /value="public"[\s\S]*?>对外公开</u);
+  assert.match(source, /value="internal"[\s\S]*?>OriginMind · 内部</u);
+  assert.match(source, /value="public"[\s\S]*?>ARTS Robotics · 公开</u);
   assert.match(source, /if \(item\.status !== "active" && item\.status !== "revoked"\) return undefined/u);
   assert.match(source, /const canApprove = canAct && Boolean\(visibility\)/u);
   assert.match(source, /body: JSON\.stringify\(\{ action, mutationRevision:[\s\S]*?\.\.\.approvalScope \}\)/u);
@@ -87,7 +87,10 @@ test("explains the internal OA and public ARTS Robotics assistant split", async 
 test("lets authorized reviewers reclassify active knowledge with the same public confirmation guard", async () => {
   const source = await readFile(path.join(root, "components/knowledge/knowledge-view.tsx"), "utf8");
 
-  assert.match(source, /查看并调整范围/u);
+  assert.match(source, /同步到联合知识库/u);
+  assert.match(source, /function KnowledgeDestinationBadge/u);
+  assert.match(source, /已同步到 OriginMind 内部知识库/u);
+  assert.match(source, /已同步到 ARTS Robotics 公共知识库/u);
   assert.match(source, /detail\.item\.status === "active" && detail\.item\.canSetVisibility/u);
   assert.match(source, /item\.status === "active" && item\.canRevoke/u);
   assert.match(source, /detail\?\.item\.canReject !== false/u);
@@ -120,8 +123,8 @@ test("keeps knowledge management search and sorting compact and usable on mobile
   assert.match(panel, /placeholder="搜索标题、摘要、正文、分类或来源"/u);
   assert.match(panel, /maxLength=\{KNOWLEDGE_LIST_QUERY_MAX_LENGTH\}/u);
   assert.match(panel, /aria-label="清空搜索关键词"/u);
-  assert.match(panel, /当前显示 \$\{items\.length\} 条匹配记录/u);
-  assert.match(panel, /最多显示前 100 条；可继续缩小关键词范围/u);
+  assert.match(panel, /显示 \$\{visible\.length\} \/ \$\{items\.length\} 条匹配记录/u);
+  assert.match(panel, /最多显示前 1000 条；可继续缩小关键词范围/u);
   assert.match(source, /value: "updated_desc", label: "最近更新"/u);
   assert.match(source, /value: "updated_asc", label: "最早更新"/u);
   assert.match(source, /value: "title_asc", label: "标题 A-Z"/u);

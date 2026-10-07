@@ -12,6 +12,16 @@ const nextConfig: NextConfig = {
     experimental: { cpus: 1, memoryBasedWorkersCount: false },
   } : {}),
   poweredByHeader: false,
+  async headers() {
+    return [
+      { source: "/oa-sw.js", headers: [
+        { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+        { key: "Service-Worker-Allowed", value: "/" },
+      ] },
+      { source: "/manifest.webmanifest", headers: [{ key: "Cache-Control", value: "no-cache" }] },
+      { source: "/pwa/:name", headers: [{ key: "X-Content-Type-Options", value: "nosniff" }] },
+    ];
+  },
   webpack(config, { webpack }) {
     if (isAliyunBuild) {
       const replacement = path.resolve(process.cwd(), "aliyun/cloudflare-workers.ts");

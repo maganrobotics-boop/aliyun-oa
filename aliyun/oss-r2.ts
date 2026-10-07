@@ -87,6 +87,10 @@ export class AliyunOssR2Bucket {
     }
   }
 
+  async delete(keys: string | string[]): Promise<void> {
+    for (const key of Array.isArray(keys) ? keys : [keys]) await this.client.delete(key);
+  }
+
   async get(key: string) {
     try {
       const result = await this.client.get(key);

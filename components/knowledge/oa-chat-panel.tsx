@@ -25,12 +25,14 @@ import { OaMeetingMode, type OaMeetingModeHandle } from './oa-meeting-mode';
 import { toast } from 'sonner';
 
 type Image = { url: string; alt: string; mimeType: string };
-type Turn = { id: string; order: number; question: string; answer: string; citations: KnowledgeCitation[]; images: Image[]; failed?: boolean; streaming?: boolean; answerSucceeded?: boolean };
-type Reply = { answer?: string; citations?: KnowledgeCitation[]; images?: Image[]; error?: string; mode?: string; fallbackReason?: string };
+type PersonnelLink = {name:string;href:string};
+type Turn = { personnelLinks?: PersonnelLink[]; id: string; order: number; question: string; answer: string; citations: KnowledgeCitation[]; images: Image[]; failed?: boolean; streaming?: boolean; answerSucceeded?: boolean };
+type Reply = { personnelLinks?: PersonnelLink[]; answer?: string; citations?: KnowledgeCitation[]; images?: Image[]; error?: string; mode?: string; fallbackReason?: string };
 
 type EditableImage = { path: string; alt: string; file?: File; sourceUrl?: string };
 const meetingModePrompt = '@会议模式';
 const quickActions = [
+  { label: '成员情况', prompt: '成员信息', helper: '工作、消费报销与贡献' },
   { label: '知识问答', prompt: '机器人自主移动与操作实验室适合本科生参与的方向有哪些？', helper: '查公开与内部资料' },
   { label: '新手村助教', prompt: '@项目总结 请把我的新手村任务拆成今天能做的清单：完善资料、确认可投入时间、阅读保密要求、选择项目方向、完成第一个学习记录。', helper: '拆任务和给建议' },
   { label: '项目总结', prompt: '@项目总结 请根据我上传或粘贴的材料，整理项目进展、问题、下一步行动项和负责人。', helper: '周报和行动项' },
@@ -224,6 +226,7 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
   const working = asking || documents.busy;
   const meetingSuggestionVisible = /^[@＠]会议(?:模)?$/u.test(question.trim());
   const timeline = [...turns.map(turn => ({ type: 'answer' as const, id: turn.id, order: turn.order, turn })), ...documents.entries].sort((a, b) => a.order - b.order);
+  const showRecommendations = timeline.length === 0 && !meetingModeOpen && !working;
   useEffect(() => { setAiDirty(Boolean(turns.length || question || asking || error || documents.entries.length || documents.busy || documents.error || meetingModeOpen)); }, [turns.length, question, asking, error, documents.entries.length, documents.busy, documents.error, meetingModeOpen, setAiDirty]);
 
   useEffect(() => () => { requestSequence.current++; requestRef.current?.abort(); }, []);
@@ -338,12 +341,12 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
       const images = (Array.isArray(data.images) ? data.images : []).filter(validOaChatImage).slice(0, 4);
       const fallback = data.mode === 'retrieval' && data.fallbackReason !== 'no_documents';
       const indicators = replyChatIndicators(data);
-      const answerSucceeded = ['ai', 'general'].includes(data.mode || '') && data.error === undefined &&
+      const answerSucceeded = ['ai', 'general', 'personnel'].includes(data.mode || '') && data.error === undefined &&
         data.fallbackReason === undefined && indicators.items[4]?.state === 'ready' &&
         data.answer.length <= 13000 && data.answer.isWellFormed();
       setRequestStatus(indicators);
       const fullAnswer = data.answer!;
-      setTurns(current => current.map(turn => turn.id === id ? { ...turn, answer: fullAnswer, citations: data.citations || [], images, failed: fallback, streaming: false, answerSucceeded } : turn));
+      setTurns(current => current.map(turn => turn.id === id ? { ...turn, answer: fullAnswer, citations: data.citations || [], images, personnelLinks: data.mode === 'personnel' ? data.personnelLinks || [] : undefined, failed: fallback, streaming: false, answerSucceeded } : turn));
       setLastAnswer(fallback ? null : { body: userFacingAnswer(data.answer), omittedImages: images.length });
     } catch (cause) {
       if (sequence !== requestSequence.current) return;
@@ -382,24 +385,25 @@ function OaAiChatPanel({ isAdmin = false }: { isAdmin?: boolean }) {
           const turn = entry.turn;
           return <div className="oa-chat-turn" key={turn.id}>
           <article className="message user" title="右键复制问题" onContextMenu={event => { event.preventDefault(); void copyQuestion(turn); }}><div className="message-content"><p>{turn.question}</p></div></article>
-          {turn.answer && <article className="message assistant"><div className="message-content">{turn.streaming ? <><RichAnswer answer={turn.answer} /><small role="status">正在生成，终稿尚未完成核验</small></> : <RichAnswer answer={turn.answer} />}
+          {turn.answer && <article className="message assistant" aria-busy={turn.streaming || undefined}><div className="message-content"><RichAnswer answer={turn.answer} />
+            {turn.personnelLinks && <p className="oa-personnel-links">{turn.personnelLinks.filter(p=>/^\/people-workbench\?person=[^/]*$/u.test(p.href)).map(p=><a key={p.href} href={p.href}>{p.name} · 个人主页</a>)} <a href="/people-workbench">人员列表</a></p>}
             {!!turn.images.length && <div className="oa-answer-images">{turn.images.map(image => <OaAnswerImage key={image.url} image={image} />)}</div>}
-            {!turn.streaming && !turn.failed && <div className="oa-answer-actions"><button type="button" className="copy-answer" onClick={() => void copy(turn)} aria-label="复制回答"><Copy size={15} />{copied === turn.id ? '已复制' : '复制'}</button><button type="button" aria-label="转发回答给成员" onClick={() => forward({ body: userFacingAnswer(turn.answer), omittedImages: turn.images.length })}><Forward size={15} />转发</button>{isAdmin && !turn.failed && <button type="button" className="oa-admin-edit-answer" onClick={() => setEditingTurn(turn)} aria-label="管理员修改回答"><Pencil size={15} />修改回答</button>}{!!turn.citations.length && <details><summary>参考已审核资料</summary>{turn.citations.map(citation => <p key={`${citation.id}-${citation.itemId}`}>{citation.title}{citation.sectionTitle ? ` · ${citation.sectionTitle}` : ''}</p>)}</details>}</div>}
+            {!turn.streaming && !turn.failed && <div className="oa-answer-actions"><button type="button" className="copy-answer" onClick={() => void copy(turn)} aria-label="复制回答"><Copy size={15} />{copied === turn.id ? '已复制' : '复制'}</button><button type="button" aria-label="转发回答给成员" onClick={() => forward({ body: userFacingAnswer(turn.answer), omittedImages: turn.images.length })}><Forward size={15} />转发</button>{isAdmin && !turn.failed && !turn.personnelLinks && <button type="button" className="oa-admin-edit-answer" onClick={() => setEditingTurn(turn)} aria-label="管理员修改回答"><Pencil size={15} />修改回答</button>}{!!turn.citations.length && <details><summary>参考已审核资料</summary>{turn.citations.map(citation => <p key={`${citation.id}-${citation.itemId}`}>{citation.title}{citation.sectionTitle ? ` · ${citation.sectionTitle}` : ''}</p>)}</details>}</div>}
           </div></article>}
           {turn.failed && <button type="button" className="oa-chat-retry" disabled={working} onClick={() => void ask(turn)}><RotateCcw size={16} />重新回答</button>}
         </div>;
         })}
-        {asking && <div className="knowledge-answer-loading" role="status">{streamPhase}</div>}
       </div>
       <div className="composer-area oa-chat-composer-area">
-        <div className="oa-chat-examples" role="group" aria-label="每日推荐"><p id={composerId + "-capabilities"}>每日推荐</p>{researchRecommendations().map(prompt => <button type="button" key={prompt} disabled={working} onClick={() => { documents.useSource(null); setQuestion(''); input.current?.blur(); stickToEnd.current = true; void ask(undefined, prompt); }}>{prompt}</button>)}</div>
+        {asking && <div className="knowledge-answer-loading oa-chat-generation-status" role="status" aria-atomic="true">{streamPhase}</div>}
+        {showRecommendations && <div className="oa-chat-examples" role="group" aria-label="每日推荐"><p id={composerId + "-capabilities"}>每日推荐</p>{researchRecommendations().map(prompt => <button type="button" key={prompt} disabled={working} onClick={() => { documents.useSource(null); setQuestion(''); input.current?.blur(); stickToEnd.current = true; void ask(undefined, prompt); }}>{prompt}</button>)}</div>}
         {(error || documents.error) && <p className="oa-chat-error" role="alert">{error || documents.error}</p>}
         <OaDocumentSource documents={documents} />
         {meetingSuggestionVisible && <div id={`${composerId}-meeting-suggestion`} className="oa-chat-command-suggestions" role="listbox" aria-label="命令补全"><button type="button" role="option" aria-selected="true" onMouseDown={event => event.preventDefault()} onClick={() => { setQuestion('@会议模式919700881'); input.current?.focus(); }}><strong>@会议模式919700881</strong><span>默认联合项目周会 · 发送后直接启动</span></button></div>}
         <form className="composer oa-chat-composer" onSubmit={submit}>
           <OaDocumentUpload documents={documents} disabled={asking} /><span className="oa-research-model">文本模型</span>
           <label className="sr-only" htmlFor={composerId}>输入想了解的实验室问题</label>
-          <textarea ref={input} id={composerId} aria-describedby={`${composerId}-capabilities`} aria-autocomplete="list" aria-controls={meetingSuggestionVisible ? `${composerId}-meeting-suggestion` : undefined} value={question} rows={1} maxLength={2000} placeholder="输入想了解的实验室问题" onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (meetingSuggestionVisible && ['Enter', 'Tab'].includes(event.key) && !event.nativeEvent.isComposing) { event.preventDefault(); setQuestion('@会议模式919700881'); return; } if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void ask(); } }} />
+          <textarea ref={input} id={composerId} aria-describedby={showRecommendations ? `${composerId}-capabilities` : undefined} aria-autocomplete="list" aria-controls={meetingSuggestionVisible ? `${composerId}-meeting-suggestion` : undefined} value={question} rows={1} maxLength={2000} placeholder="输入想了解的实验室问题" onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (meetingSuggestionVisible && ['Enter', 'Tab'].includes(event.key) && !event.nativeEvent.isComposing) { event.preventDefault(); setQuestion('@会议模式919700881'); return; } if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); void ask(); } }} />
           {/* Abort may synchronously replace the control. Cancel its default action
               before aborting and keep stop/send as separate DOM buttons. */}
           {asking ? <button key="stop" type="button" className="send-button" onClick={event => { event.preventDefault(); requestRef.current?.abort(); }} aria-label="停止等待回答"><Square size={18} /></button> : <button key="send" type="submit" className="send-button" disabled={documents.busy || question.trim().length < 2} aria-label="发送问题"><ArrowUp size={24} /></button>}

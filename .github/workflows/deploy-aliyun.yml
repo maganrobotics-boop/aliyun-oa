@@ -1,11 +1,8 @@
 name: Deploy oa to Aliyun
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
+  # Production-source reconciliation uses a verified manual release.
+  # Keep source merges from invoking the legacy server deploy concurrently.
 concurrency:
   group: deploy-oa-production
   cancel-in-progress: false

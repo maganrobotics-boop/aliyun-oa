@@ -19,7 +19,7 @@ const vite = await createServer({
       return null;
     },
     load(id) {
-      if (id === "\0circulation-db") return `export async function getDb() { return globalThis.${stateKey}.db; }`;
+      if (id === "\0circulation-db") return `export async function getDb() { return globalThis.${stateKey}.db; } export async function getD1Database() { return globalThis.${stateKey}.db.$client; }`;
       if (id !== "\0circulation-auth") return null;
       return `import { sql } from "drizzle-orm";
         const state = () => globalThis.${stateKey};
@@ -46,7 +46,7 @@ function d1Adapter(database) {
   function prepare(query, params = []) {
     const execute = () => ({ success: true, results: database.prepare(query).all(...params), meta: { changes: Number(database.prepare("SELECT changes() n").get().n) } });
     return {
-      bind(...values) { return prepare(query, values); }, async all() { return execute(); }, async run() { return execute(); },
+      bind(...values) { return prepare(query, values); }, async first() { return database.prepare(query).get(...params) ?? null; }, async all() { return execute(); }, async run() { return execute(); },
       async raw() { const statement = database.prepare(query); statement.setReturnArrays(true); return statement.all(...params); },
     };
   }

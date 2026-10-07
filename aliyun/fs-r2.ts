@@ -78,6 +78,14 @@ export class FileSystemR2Bucket {
     }
   }
 
+  async delete(keys: string | string[]): Promise<void> {
+    const files = (Array.isArray(keys) ? keys : [keys]).map(key => safeObjectPath(this.root, key));
+    for (const file of files) {
+      await rm(file, { force: true });
+      await rm(file + '.metadata.json', { force: true });
+    }
+  }
+
   async get(key: string) {
     const file = safeObjectPath(this.root, key);
     try {

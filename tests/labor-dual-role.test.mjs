@@ -22,7 +22,7 @@ const vite = await createServer({
       return null;
     },
     load(id) {
-      if (id === "\0labor-test-db") return `export async function getDb() { return globalThis.${stateKey}.db; }`;
+      if (id === "\0labor-test-db") return `export async function getDb() { return globalThis.${stateKey}.db; } export async function getD1Database() { return globalThis.${stateKey}.db.$client; }`;
       if (id === "\0labor-test-auth") return `
         import { sql } from "drizzle-orm";
         const state = () => globalThis.${stateKey};
@@ -61,6 +61,7 @@ function d1Adapter(database) {
     };
     return {
       bind(...values) { return prepare(query, values); },
+      async first() { return database.prepare(query).get(...params) ?? null; },
       async all() { return execute(); },
       async run() { return execute(); },
       async raw() {
