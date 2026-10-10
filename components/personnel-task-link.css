@@ -11,7 +11,7 @@
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.personnel-task-copy > p {
+.personnel-task .personnel-task-copy > p {
   font-size: 13px;
   line-height: 1.6;
   overflow-wrap: anywhere;
