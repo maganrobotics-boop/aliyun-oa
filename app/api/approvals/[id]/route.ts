@@ -1,4 +1,5 @@
-import { getReviewPolicy, fixedTechnicalPayload, technicalReviewState, advanceTechnicalReview, technicalRoute, policyActor, assertPurchaseSettled, technicalPendingForEmail } from '../../../../lib/review-routing.mjs';
+import { weeklyReviewPayload, assertWeeklyReviewRoute } from '../../../../lib/weekly-review.mjs';
+import { getReviewPolicy, fixedTechnicalPayload, technicalReviewState, advanceTechnicalReview, policyActor, assertPurchaseSettled, technicalPendingForEmail } from '../../../../lib/review-routing.mjs';
 import { LedgerError } from '../../../../lib/expense-ledger.mjs';
 import { administratorReviewAllowed, administratorReviews, hasAdministratorReview } from "../../../../lib/administrator-approval";
 import { returnedApprovalDeletionError } from "../../../../lib/returned-approval-deletion";
@@ -372,7 +373,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       const expected=approval.currentStep === "负责人终审" ? reviewPolicy.owner : reviewPolicy.finance;
       if(!policyActor(expected,authorized)) return Response.json({error:"仅本节点指定审核人本人可以处理。"},{status:403});
     }
-    const managedReview = Boolean(reviewPolicy && (["技术审核", "采购审核"].includes(approval.type) || payload.technicalWeekly === true));
+    if (payload.technicalWeekly === true && ["approve","confirm_circulation"].includes(action)) assertWeeklyReviewRoute(payload,reviewPolicy,requesterEmail);
+    const managedReview = payload.technicalWeekly === true || Boolean(reviewPolicy && ["技术审核", "采购审核"].includes(approval.type));
     const administratorReview = !managedReview && administratorReviewAllowed(approval.type, approval.currentStep, approval.status, authorized.isAdmin) && (action === "approve" || action === "return");
     const isApplicantAction = action === "resubmit" || action === "withdraw" || action === "void" || action === "archive_note";
     if (isApplicantAction) {
@@ -510,7 +512,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         const error = validateStoredCirculation(payload, await activeMembers(db), requesterEmail);
         if (error) return Response.json({ error }, { status: 409 });
         payload = { ...payload, circulationConfirmations: [], circulationApprovals: [] };
-        if(payload.technicalWeekly === true && reviewPolicy) payload = {...payload,circulationApprovers:technicalRoute(reviewPolicy).filter(p=>p.memberId===reviewPolicy.owner.memberId||p.email!==requesterEmail),circulationOrdered:true,circulationAnyTechnical:true};
+        if(payload.technicalWeekly === true) payload = weeklyReviewPayload(payload,reviewPolicy,requesterEmail);
         const person = [...circulationPeople(payload.circulationRecipients), ...circulationPeople(payload.circulationApprovers)][0];
         nextReviewer = { email: person.email, displayName: person.name };
       } else if (approval.type === "技术审核") {

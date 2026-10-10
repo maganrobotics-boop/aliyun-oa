@@ -1,4 +1,5 @@
-import { getReviewPolicy, fixedTechnicalPayload, technicalRoute, technicalParticipant } from '../../../lib/review-routing.mjs';
+import { weeklyReviewPayload } from '../../../lib/weekly-review.mjs';
+import { getReviewPolicy, fixedTechnicalPayload, technicalParticipant } from '../../../lib/review-routing.mjs';
 import { LedgerError } from '../../../lib/expense-ledger.mjs';
 import { and, count, desc, eq, exists, isNull, sql } from "drizzle-orm";
 import { getDb, getD1Database } from "../../../db";
@@ -108,6 +109,7 @@ function approvalListSelection(currentEmail: string) {
         'circulationConfirmations', json_extract(${approvals.payloadJson}, '$.circulationConfirmations'),
         'circulationOrdered', json_extract(${approvals.payloadJson}, '$.circulationOrdered') = 1,
         'circulationAnyTechnical', json(CASE WHEN json_extract(${approvals.payloadJson}, '$.circulationAnyTechnical') = 1 THEN 'true' ELSE 'false' END),
+        'weeklyReviewVersion', json_extract(${approvals.payloadJson}, '$.weeklyReviewVersion'),
         'technicalWeekly', json(CASE WHEN json_extract(${approvals.payloadJson}, '$.technicalWeekly') = 1 THEN 'true' ELSE 'false' END),
         'circulationApprovals', json_extract(${approvals.payloadJson}, '$.circulationApprovals')
       )
@@ -489,12 +491,14 @@ export async function POST(request: Request) {
     }
 
     if (["技术审核","采购审核"].includes(type) && reviewPolicy) { payload = fixedTechnicalPayload(payload, reviewPolicy, currentEmail); reviewerEmail = textValue(payload.initialReviewerEmail); }
-    if (type === "流转审批" && reviewPolicy && requestedId) {
-      const weekly = await (await getD1Database()).prepare('SELECT id FROM personnel_weekly_entries WHERE client_key=? AND member_id=?').bind(requestedId,authorized.memberId).first();
+    if (type === "流转审批" && requestedId) {
+      const weeklyDb = await getD1Database();
+      const weeklyReady = await weeklyDb.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='personnel_weekly_entries'").first();
+      const weekly = weeklyReady ? await weeklyDb.prepare('SELECT id,confirmed_at,state,content,title FROM personnel_weekly_entries WHERE client_key=? AND member_id=?').bind(existing?.clientCreationKey || requestedId,authorized.memberId).first<{id:string;confirmed_at:string;state:string;content:string;title:string}>() : null;
       if (weekly) {
-        const route = technicalRoute(reviewPolicy).filter(person=>person.memberId === reviewPolicy.owner.memberId || person.email !== currentEmail);
-        if (route.some(person => person.email === currentEmail)) return Response.json({ error: "本人不能审核自己的技术周报，请联系负责人处理职责冲突。" }, { status: 409 });
-        payload = { ...payload, circulationApprovers: route, circulationOrdered: true, circulationAnyTechnical: true, technicalWeekly: true };
+        if (!weekly.confirmed_at || weekly.state !== 'submitting') return Response.json({error:'请先在个人主页核对并确认本人的工作量。'}, {status:409});
+        if (!existing && payload.circulationContent !== weekly.content) return Response.json({error:'提交内容与本人确认版本不一致，请刷新。'}, {status:409});
+        payload = weeklyReviewPayload(payload,reviewPolicy,currentEmail);
       }
     }
     const ndaDirectArchive = type === "保密协议" && agreementKind !== null

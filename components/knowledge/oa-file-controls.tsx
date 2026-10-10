@@ -5,6 +5,7 @@ import { Archive, FileText, FolderOpen, Plus, RotateCcw } from 'lucide-react';
 import { CHAT_ATTACHMENT_ACCEPT, type ChatAttachmentBundle } from '@/lib/oa-chat-attachments.mjs';
 import { reviseKnowledgePackage, submitKnowledgePackage, type KnowledgePackage } from '@/lib/knowledge-package.mjs';
 import { OaKnowledgeDraftFields, type KnowledgeTextDraft } from './oa-knowledge-draft-fields';
+import { KnowledgeWeeklyDistribution } from './weekly-distribution';
 import type { ChatDocumentTask } from '@/lib/oa-chat-documents.mjs';
 import './oa-file-controls.css';
 
@@ -79,6 +80,7 @@ export function OaSourceArchive({ bundle, onSubmitted, editorVisible = false, on
   const [error, setError] = useState(''), [progress, setProgress] = useState(''), [item, setItem] = useState<{ id: string; status: string } | null>(null);
   const lock = useRef(false), live = useRef(true);
   const [draft, setDraft] = useState<KnowledgeTextDraft>({ title: bundle.pkg.title, body: bundle.pkg.body });
+  const [purpose, setPurpose] = useState(/周会/.test(bundle.pkg.title) ? 'meeting_minutes' : /周报/.test(bundle.pkg.title) ? 'weekly_report' : 'research');
   const [attempted, setAttempted] = useState(false);
   const prepared = useRef<KnowledgePackage | null>(null);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
@@ -86,7 +88,7 @@ export function OaSourceArchive({ bundle, onSubmitted, editorVisible = false, on
     if (lock.current || !confirmed || item) return;
     lock.current = true; setBusy(true); onBusyChange?.(true); setError('');
     try {
-      if (!prepared.current) prepared.current = await reviseKnowledgePackage(bundle.pkg, draft);
+      if (!prepared.current) prepared.current = { ...await reviseKnowledgePackage(bundle.pkg, draft), category: purpose === 'research' ? bundle.pkg.category : purpose };
       if (live.current) setAttempted(true);
       const receipt = await submitKnowledgePackage(prepared.current, { onProgress: text => { if (live.current) setProgress(text); } });
       if (live.current) { setItem(receipt.item); setOpen(false); onSubmitted?.(); }
@@ -94,12 +96,17 @@ export function OaSourceArchive({ bundle, onSubmitted, editorVisible = false, on
     finally { lock.current = false; if (live.current) { setBusy(false); onBusyChange?.(false); } }
   }
   return <section className="oa-file-archive" aria-label="原始资料归档">
+    {(editorVisible || open) && <label className="oa-upload-purpose">资料用途<select aria-label="资料用途" value={purpose} disabled={busy || attempted || Boolean(item)} onChange={event => { setPurpose(event.target.value); setConfirmed(false); prepared.current = null; }}>
+      <option value="research">一般资料</option><option value="weekly_report">个人周报</option><option value="meeting_minutes">集体周会</option>
+    </select></label>}
+    {(purpose !== 'research' || /周报|周会/.test(draft.title)) && <p>正文保存后自动生成本人的工作确认单；集体周会可在提交成功后选择参与成员，分别分发。</p>}
     {(editorVisible || open) && <OaKnowledgeDraftFields draft={draft} images={bundle.pkg.availableImages || bundle.pkg.images} disabled={busy || attempted || Boolean(item)} onChange={next => { setDraft(next); setConfirmed(false); setError(''); prepared.current = null; }} />}
     {!item && !open && <button type="button" className="oa-file-archive-button" onClick={() => setOpen(true)}><Archive size={16} />{editorVisible ? '确认内容并提交审核' : '编辑并归档资料'}</button>}
     {attempted && error && <p>已开始提交，请保留当前内容重试；重新选择资料可创建新的可编辑草稿。</p>}
     {open && <ArchiveConfirm busy={busy} confirmed={confirmed} setConfirmed={setConfirmed} onSubmit={() => void submit()} onCancel={() => setOpen(false)} />}
     {progress && !item && <p role="status">{progress}</p>}{error && <p role="alert" className="oa-file-warning">{error}</p>}
     {item && <p role="status">{statusText[item.status] || 'OA 已接收，待核对审核状态'} · 编号 {item.id}</p>}
+    {item && (purpose !== 'research' || /周报|周会/.test(draft.title)) && <KnowledgeWeeklyDistribution itemId={item.id} />}
   </section>;
 }
 type Lifecycle = { state: string; expiresAt: number | null; knowledgeItemId: string | null; knowledgeStatus: string | null; visibility?: string | null };

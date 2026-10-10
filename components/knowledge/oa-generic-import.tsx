@@ -23,7 +23,7 @@ export function OaGenericImport({ onSubmitted }: { onSubmitted: () => void }) {
   }
   return <section className="oa-generic-source oa-upload-compact" aria-label="上传资料">
     <header className="oa-upload-toolbar">
-      <div><h2>资料上传</h2><p>文档、图片、ZIP · ZIP 最大 100 MB</p></div>
+      <div><h2>资料上传</h2><p>文档、图片、ZIP · 周报和周会可生成个人工作确认单</p></div>
       <div className="oa-upload-buttons">
         <button type="button" className="oa-upload-primary" disabled={busy || submitting} onClick={() => fileInput.current?.click()}><Upload size={18} />{busy ? '正在解析…' : submitting ? '正在提交…' : '上传资料'}</button>
         <button type="button" className="oa-upload-folder" disabled={busy || submitting} onClick={() => folderInput.current?.click()}><FolderOpen size={17} />文件夹</button>
