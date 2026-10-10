@@ -4,6 +4,20 @@
 
 企业微信首次使用需要先通过已有方式登录 OA，在「右上角姓名 → 设置 → 账号绑定 → 绑定企业微信」关联本人身份。手机确认页同时显示企微身份、目标 OA 成员姓名及脱敏账号提示，确认两者均属于本人后再绑定。之后飞书和企微都进入同一成员账号，沿用原来的资料、申请、权限和 NDA 状态。不会按姓名或邮箱自动合并账号，不会为未绑定企微身份创建成员。
 
+## 当前状态：2026-10-10 已正式上线
+
+- 正式入口：`https://oa.omindos.cn/`，飞书和企业微信扫码均已启用。绑定入口是「右上角姓名 → 设置 → 账号绑定 → 绑定企业微信」。
+- 用户本人 13:53:39 完成企微 OAuth 与绑定，13:56:24 退出后使用企微扫码登录成功；后台核对飞书、企微关联同一 OA 成员。未伪造身份或创建验收成员。已有飞书登录和原本机备用入口保留；本次没有单独取得新版飞书手机客户端回调的真人验收记录。
+- PR #10 已合并，合并提交 `103625a23c5134423f9c20d39f9c80abb9f961f2` 与已验证候选 `ec59adb0031e403a0b979ad3e9901ffae38c7485` 全树相同。正式服务运行 `/opt/omindos-deploy/releases/oa-unified-ec59adb0031e`，端口 3000；两个 OA current 链接均指向该目录。
+- 正式 systemd 附加配置为 `/etc/systemd/system/originmind-oa.service.d/zzzzzzzzzzz-unified-login.conf`，读取 root 0600 的 `/etc/originmind-oa/wecom-login.env`。`OA_UNIFIED_QR_LOGIN_ENABLED` 和 `WECOM_LOGIN_ENABLED` 均为 true。原有业务、飞书及会话相关环境值经逐项比较保持不变。
+- 正式 Nginx 包含 `/etc/nginx/snippets/oa-unified-login-locations.conf`，扫码接口均代理端口 3000，OAuth 回调关闭 access log。旧验收链接只清理临时路由 Cookie 并跳转首页；旧路由 map 已移除，验收服务已停止。
+- 公网验收通过：首页、姓名设置组件、两种扫码提供方、五分钟二维码生成/状态/取消、未登录绑定拒绝、跨域拒绝、旧验收链接跳转、企微域名验证文件与 chat 入口。停止验收服务后再次确认正式二维码接口正常。
+- 发布前新增完整 SQLite 在线备份与配置备份：`/opt/omindos-deploy/checkpoints/unified-login-20261010/production-release/`；备份完整性为 ok。保留 226 个旧静态文件后，服务用户预检通过 333 个文件。当前候选依赖已有 release 中的 node_modules，因此相关旧 release 仍须保留。
+- 企微应用当前可见范围只有 1 位激活成员；其他成员需先加入该应用可见范围，再用原 OA 账号完成本人企微绑定。
+- 回退代码/配置时可以恢复上一发布 `/opt/omindos-deploy/releases/oa-library-5ee312888763` 及发布前配置，**不要恢复旧数据库**，避免丢失真实绑定或后续业务数据。详细原始配置和完成时间以服务器受保护的 `canary-state.json` 及 production-release 检查点为准。
+
+以下为历史准备和验收记录，状态以上节为准。
+
 ## 管理员配置
 
 ### 飞书
