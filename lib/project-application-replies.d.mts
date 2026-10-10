@@ -1,0 +1,1 @@
+export function handleApplicationReply(request: Request, id: string, options: { db: D1Database; actor: { email: string; memberId: string; accountUserId: string }; approve: (note: string) => Promise<Response>; transport?: { fetch: (url: string, init: RequestInit) => Promise<Response> }; secret: string }, now?: number): Promise<Response>;
