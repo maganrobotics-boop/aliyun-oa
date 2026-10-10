@@ -8,11 +8,11 @@ const time=(s:string)=>s?new Date(s).toLocaleString('zh-CN',{timeZone:'Asia/Shan
 export function WeeklyPanel({workflow,memberId,own,manager,busy,run}:{workflow:Workflow;memberId:string;own:boolean;manager:boolean;busy:boolean;run:Run}){
   const [title,setTitle]=useState(''),[source,setSource]=useState('');
   const entries=workflow.weekly.filter(w=>w.member_id===memberId);
-  return <section className="pw-panel"><div className="pw-section-title"><h2>周报与本人工作确认</h2><span>审核人：{workflow.reviewerName||'待设置'}</span></div>
-    <p>从周报带入 → 本人修改并确认 → 提交 OA → 任一指定技术审核人通过 → 负责人审核通过。只有审核通过的内容计入工作与绩效依据。</p>
+  return <section className="pw-panel"><div className="pw-section-title"><h2>周报、周会与本人工作确认</h2><span>审核人：{workflow.reviewerName||'待设置'}</span></div>
+    <p>周报、周会总结生成后自动进入 OA 待办 → 每人核对自己的工作量 → 石老师或冯永玄任一人审核 → 自动列入个人主页的已审核成果。</p>
     {own&&workflow.sources.length>0&&<details className="pw-source"><summary>可同步的本人周报（{workflow.sources.length}）</summary>{workflow.sources.map(s=><div className="pw-purchase" key={s.id}><span>{s.title} · {s.kind}</span><button disabled={busy} onClick={()=>void run({action:'work_create',memberId,sourceId:s.id},'周报已同步，请核对并修改本人工作。')}>带入周报</button></div>)}</details>}
     {(own||manager)&&!memberId.startsWith('bill:')&&<details className="pw-source"><summary>导入周报原文</summary><p>尚未接入 OA 的周报可以粘贴原文或上传 TXT。原文保留，工作内容由本人修改确认。</p><label>周报标题<input value={title} maxLength={150} onChange={e=>setTitle(e.target.value)} placeholder="例如：10 月第 1 周工作周报"/></label><label>周报原文<textarea rows={5} maxLength={20000} value={source} onChange={e=>setSource(e.target.value)}/></label><label>读取 TXT 文件<input type="file" accept=".txt,text/plain" onChange={async e=>{const f=e.target.files?.[0];if(f&&f.size<=60000){setSource((await f.text()).slice(0,20000));if(!title)setTitle(f.name.replace(/\.txt$/i,''));}e.target.value='';}}/></label><button disabled={busy||!title.trim()||!source.trim()} onClick={async()=>{if(await run({action:'work_create',memberId,title,sourceText:source},'周报已带入，等待本人修改确认。')){setTitle('');setSource('');}}}>导入并等待本人确认</button></details>}
-    {entries.length?entries.map(w=><WeeklyCard key={w.id+':'+w.state+':'+w.content} entry={w} own={own} busy={busy} run={run} reviewer={workflow.reviewerName} owner={workflow.disputeOwnerName}/>):<p className="pw-empty">暂无已同步到该成员的周报。导入后由本人核对，未经确认不会生成已完成工作。</p>}
+    {entries.length?entries.map(w=><WeeklyCard key={w.id+':'+w.state+':'+w.content} entry={w} own={own} busy={busy} run={run} reviewer={workflow.reviewerName} owner={workflow.disputeOwnerName}/>):<p className="pw-empty">暂无周报或周会工作确认单。新生成的周报自动带入；集体周会按关联成员分别确认，审核后计入正式成果。</p>}
   </section>;
 }
 function WeeklyCard({entry:w,own,busy,run,reviewer,owner}:{entry:Weekly;own:boolean;busy:boolean;run:Run;reviewer:string;owner:string}){

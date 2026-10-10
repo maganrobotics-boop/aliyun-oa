@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { WeeklyParticipants } from '../../components/weekly-participants';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { TASK_KINDS } from '../../lib/ai-workbench-core.mjs';
 import { renderAnswerBody } from '../../lib/oa-chat-renderer.mjs';
@@ -101,7 +102,7 @@ export default function AiWorkbench() {
   }
   return <main className="ai-workbench">
     <header><Link href="/">← 返回 OA</Link><h1>AI 工作台</h1><p>交给 AI 完成任务，直接领取可编辑的成果文件。</p></header>
-    <div className="workbench-note">文字材料 → 百炼生成正文 → 制作并校验 Word / Markdown → 私有归档。仅本人可见，不自动公开、不代替审批。第一版支持 TXT、Markdown 和粘贴文字；图片与公式暂不转换。</div>
+    <div className="workbench-note">文字材料 → 百炼生成正文 → 制作并校验 Word / Markdown → 私有归档。周报与周会自动生成本人工作确认单；关联的参与成员分别核对后送审。第一版支持 TXT、Markdown 和粘贴文字；图片与公式暂不转换。</div>
     {error && <div className="workbench-error" role="alert">{error} <button type="button" onClick={() => { setError(''); void refresh().catch(cause => { setReady(false); setError(cause.message); }); }}>刷新核对</button></div>}
     <div className="workbench-grid">
       <section className="workbench-card"><h2>交给 AI 做什么</h2>
@@ -131,6 +132,7 @@ export default function AiWorkbench() {
             {selected.status === 'failed' && selected.attempts < 3 && <button type="button" disabled={busy} onClick={() => void action('retry', selected.id)}>手动重试</button>}
             {['queued', 'running'].includes(selected.status) && <button type="button" onClick={() => void action('cancel', selected.id)}>取消任务</button>}
           </div>
+          {selected.status === 'succeeded' && ['weekly_report','meeting_minutes'].includes(selected.kind) && <WeeklyParticipants key={selected.id} taskId={selected.id}/> }
           {selected.result && <ResultPreview answer={selected.result} />}
           <details><summary>查看本次要求与原始材料</summary><pre>{selected.instruction}{'\n\n'}{selected.material}</pre></details>
         </article>}

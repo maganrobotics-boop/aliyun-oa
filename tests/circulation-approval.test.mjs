@@ -213,3 +213,53 @@ test("concurrent confirmations do not lose another person's decision or audit ev
   for(let i=0;i<results.length;i++){assert.ok([200,409].includes(results[i].status),JSON.stringify(results[i]));if(results[i].status===409)assert.equal((await patch(id,`recipient${i+1}`,"confirm_circulation")).status,200);}
   assert.equal(row(id).status,"已归档");assert.equal(JSON.parse(row(id).payload_json).circulationConfirmations.length,2);assert.equal(events(id).length,3);
 });
+
+function weeklyFixture(confirmed=true) {
+  for(const name of ['expense-ledger-20261007.sql','review-routing-20261007.sql']) sqlite.exec(readFileSync(new URL('../migrations/'+name,import.meta.url),'utf8'));
+  const person=id=>({memberId:id,accountUserId:'email:'+id+'@example.com',email:id+'@example.com',name:id});
+  sqlite.prepare('INSERT INTO oa_review_policy VALUES(1,?,?,?,?)').run(JSON.stringify(['reviewer1','reviewer2'].map(person)),JSON.stringify(person('recipient1')),JSON.stringify(person('recipient2')),'now');
+  sqlite.prepare(`INSERT INTO personnel_weekly_entries(id,member_id,source_key,source_title,source_text,title,content,state,client_key,created_at,updated_at,confirmed_at,mutation_token) VALUES('weekly','author','ai:task','周报','原文','周报',?,?, 'weekly-test','now','now',?,'r1')`).run(body().payload.circulationContent,confirmed?'submitting':'draft',confirmed?'2026-10-10T01:30:00Z':'');
+  return {...body([],['reviewer1','reviewer2']),id:'weekly-test'};
+}
+for(const reviewer of ['reviewer1','reviewer2']) test(`weekly: ${reviewer} alone archives confirmed work and preserves PDF evidence`,async()=>{
+  const c=await create(weeklyFixture());assert.equal(c.status,201,JSON.stringify(c.data));const id=c.data.approval.id;
+  assert.equal(c.data.approval.payload.weeklyReviewVersion,2);
+  assert.equal((await patch(id,'recipient2','approve')).status,404);
+  const approved=await patch(id,reviewer,'approve',{note:'核对本人工作量与成果，通过。'});
+  assert.equal(approved.status,200,JSON.stringify(approved.data));assert.equal(row(id).status,'已归档');
+  assert.equal(JSON.parse(row(id).payload_json).circulationApprovals.length,1);
+  const checked=await get(id,'author');assert.equal(checked.data.approval.archiveIntegrityError,undefined);assert.ok(checked.data.approval.archiveHash);
+});
+test('weekly: cannot bypass personal confirmation or substitute confirmed contents',async()=>{
+  const input=weeklyFixture(false);assert.equal((await create(input)).status,409);
+  sqlite.exec("UPDATE personnel_weekly_entries SET state='submitting',confirmed_at='2026-10-10'");
+  input.payload.circulationContent='未被本人核对的另一份内容';assert.equal((await create(input)).status,409);
+});
+test('weekly: unrelated administrator cannot approve and changed reviewer identity is rejected',async()=>{
+  const c=await create(weeklyFixture());const id=c.data.approval.id;
+  setActor('outsider');globalThis[stateKey].actor.isAdmin=true;
+  assert.equal((await detail.PATCH(request('PATCH',{action:'approve'}),{params:Promise.resolve({id})})).status,404);
+  sqlite.exec("UPDATE members SET account_user_id='changed-account' WHERE id='reviewer1'");
+  assert.equal((await patch(id,'reviewer2','approve')).status,409);
+  assert.notEqual(row(id).status,'已归档');
+});
+test('weekly: return and resubmit require a fresh technical decision',async()=>{
+  const c=await create(weeklyFixture());const id=c.data.approval.id;
+  assert.equal((await patch(id,'reviewer1','return',{note:'补充工作量证据'})).status,200);
+  assert.equal((await patch(id,'author','resubmit',{note:'已补充工作量证据'})).status,200);
+  assert.equal(row(id).current_step,'指定审批');
+  assert.deepEqual(JSON.parse(row(id).payload_json).circulationApprovals,[]);
+  assert.equal((await patch(id,'reviewer2','approve')).status,200);
+  assert.equal(row(id).status,'已归档');
+});
+test('weekly: editing through the native approval ID cannot strip the fixed weekly route',async()=>{
+ const input=weeklyFixture();const c=await create(input);const id=c.data.approval.id;
+ assert.equal((await patch(id,'reviewer1','return',{note:'补充工作量'})).status,200);
+ setActor('author');const changed=await create({...input,id,payload:{...input.payload,circulationApprovers:['outsider'],circulationContent:'本人补充后的工作量和验证证据。'}});
+ assert.equal(changed.status,200,JSON.stringify(changed.data));
+ assert.equal(changed.data.approval.payload.weeklyReviewVersion,2);
+ assert.deepEqual(changed.data.approval.payload.circulationApprovers.map(p=>p.memberId),['reviewer1','reviewer2']);
+});
+test('weekly: missing reviewer policy must not fall back to ordinary administrator approval',async()=>{
+ const input=weeklyFixture();sqlite.exec('DELETE FROM oa_review_policy');assert.equal((await create(input)).status,409);
+});

@@ -8,6 +8,7 @@ const header='交易时间,交易分类,交易对方,商品说明,收/支,金额
 const csv=header+'\n2026-09-01 10:00:00,亲友代付,测试甲,亲情卡,支出,100.00,payment0000001,merchant001,支付成功,信用卡,\n2026-09-02 10:00:00,退款,测试甲,退款-亲情卡,不计收支,20.00,refund0000001,merchant001,退款成功,信用卡,\n2026-09-01 10:00:00,餐饮,非目标人员,个人消费,支出,60.00,payment0000009,other,支付成功,余额,\n';
 function fixture(){
   const raw=new DatabaseSync(':memory:');raw.exec(`
+  CREATE TABLE account_profiles(chatgpt_account TEXT PRIMARY KEY,profile_json TEXT);
   CREATE TABLE members(id TEXT PRIMARY KEY,full_name TEXT,chatgpt_account TEXT,role TEXT,status TEXT,mutation_revision TEXT,account_user_id TEXT,nda_accepted_at TEXT);
   CREATE TABLE approvals(id TEXT PRIMARY KEY,type TEXT,title TEXT,project TEXT,requester_email TEXT,requester_name TEXT,status TEXT,current_step TEXT,current_reviewer_name TEXT,created_at TEXT,updated_at TEXT,payload_json TEXT,client_creation_key TEXT);
   CREATE TABLE knowledge_items(id TEXT,title TEXT,category TEXT,submitter_member_id TEXT,revoked_at TEXT,current_revision_id TEXT);
