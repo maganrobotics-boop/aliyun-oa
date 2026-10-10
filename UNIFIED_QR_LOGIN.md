@@ -39,7 +39,26 @@ https://oa.omindos.cn/api/auth/qr/callback/wecom
 
 企微配置缺失时，页面只提示当前可用的平台。该功能不接入审批消息或待办推送，不改变业务数据接口。
 
-## 2026-10-10 接续与发布
+## 2026-10-10 验收入口状态（北京时间 13:36）
+
+- 服务器已安全录入自建应用凭据；获取 token、读取应用、读取可见成员均成功。AgentID 为 `1000002`，应用启用，可信域名确认是 `oa.omindos.cn`，当前可见范围为 1 位激活成员。可信 IP 已由用户在企微后台保存，接口不再报 60020。没有回显 Secret、token、成员身份或完整上游错误。
+- 运行候选 `b64735aa453dbf030b5b14426f1ab3c6661e4923` 已在阿里云完成生产构建、服务账号文件访问预检和 HTTP 登录保护检查。候选服务 `originmind-oa-login-canary.service` 监听 `127.0.0.1:3099`，与正式服务独立运行。
+- 验收入口：`https://oa.omindos.cn/login-check-b64735aa`。仅此入口设置两小时的路由 Cookie；手机 `/auth/qr` 会同步进入候选。该 Cookie 只选择版本，不授予登录身份或 OA 权限。默认访问仍进入端口 3000 的 `oa-library-5ee312888763`。
+- 数据库已备份并先在副本演练，再向正式数据库应用纯新增 `0036_unified_qr_login.sql`：两张临时认证表、四个索引；既有迁移账本不变，`integrity_check=ok`。候选使用同一 OA 数据库，用户在验收中确认的身份绑定可以保留；不要把验收环境当成可随意修改业务资料的沙盒。
+- 自动检查已验证：正常入口仍走旧版本；验收入口及手机路由走候选；两个平台均能生成授权地址，回调域名正确；安全 Cookie、飞书 PKCE、跨域请求拒绝、未登录禁止绑定、缺少手机 Cookie 的回调拒绝、取消挑战均符合预期。真实手机 OAuth 尚未验收，不能据此宣称双登录正式上线。
+- 新 OAuth 回调关闭 Nginx access log，防止授权 code/state 进入代理访问日志。企微后台的浏览器访问仍受站点安全策略限制；上述配置已通过独立的服务端 API 核验。
+
+下一步由用户在电脑打开验收入口，用手机飞书扫码确认，然后在「我的 → 绑定企业微信」核对本人身份并确认绑定，退出后用企微扫码重新登录。核对既有成员资料与权限保持一致。通过后再合并 PR、挂载企微环境文件并启用统一登录，切换正式服务；切换前重新核对生产版本。
+
+运维接续（仅服务器本地，不把环境文件或备份上传仓库）：
+
+- 候选目录：`/opt/omindos-deploy/releases/oa-unified-b64735aa453d`。
+- 安全配置：`/etc/originmind-oa/wecom-login.env`、`/etc/originmind-oa/login-canary.env`，均为 root 0600。正式服务尚未挂载前者，前者保留统一登录关闭标记；候选配置已单独启用。
+- 备份与核验状态：`/opt/omindos-deploy/checkpoints/unified-login-20261010/`，root 0700；包含迁移前 SQLite、Nginx 原配置及 `canary-state.json`。状态文件中的路由 Cookie 不提交仓库。
+- 临时路由：`/etc/nginx/conf.d/00-oa-login-canary-map.conf` 和 `/etc/nginx/snippets/oa-login-canary-locations.conf`，仅 OA 的 HTTPS server 引用；正式配置修改前后 hash 保存在状态文件。
+- 退出候选入口：`https://oa.omindos.cn/login-check-exit`。取消验收时，在确认配置未被并行修改后恢复本次 Nginx 改动，执行 `nginx -t` 再 reload，停止候选服务；保留新增认证表。**不要为回退界面而恢复旧数据库，否则会丢失备份后的真实业务和身份绑定。**
+
+## 2026-10-10 早期准备记录（已由上节状态更新）
 
 - 用户已完成企微自建应用。生产 OA 已核对为 `oa-library-5ee312888763`，对应 `maganrobotics-boop/aliyun-oa`；运行进程内尚无 `WECOM_LOGIN_*` 配置。
 - `omindos.cn` 与 `oa.omindos.cn` 的 `WW_verify_TrIXNK3EoirCVbIT.txt` 均返回 200、text/plain、16 字节，内容 SHA-256 相同。网页验证文件可用不等于后台可信域名已经保存。
@@ -55,7 +74,7 @@ sudo python3 scripts/configure-wecom-login.py
 
 按提示输入 CorpID、AgentID 和**同一自建应用** Secret。Secret 隐藏输入；脚本只新建 root 可读的 `/etc/originmind-oa/wecom-login.env`（0600），保留 `OA_UNIFIED_QR_LOGIN_ENABLED=false`，不改已有飞书配置、不重启、不启用服务，已有文件时拒绝覆盖。
 
-发布前继续完成：
+早期发布计划（迁移已经按上节改为先备份、演练，再为受控验收添加临时表）：
 
 1. 核对企微网页授权可信域名是 `oa.omindos.cn`，应用可见范围包含待登录成员，可信 API IP 对应 OA 服务器的实际出口 IP。飞书新回调保留 `https://oa.omindos.cn/api/auth/qr/callback/feishu`，旧回调也保留。
 2. 在受保护服务器内验证应用凭据，不将 Secret、access_token、真实成员信息或上游原始错误写入日志/仓库。
@@ -63,7 +82,7 @@ sudo python3 scripts/configure-wecom-login.py
 4. 再按阿里云流程备份 SQLite，应用 0036，验证两张临时认证表和四个索引以及既有迁移记录，挂载配置、切换已构建候选并验收。切换前重新比较生产版本，不能覆盖并行发布的新功能。
 5. 回退时恢复上一代码包并关闭 `OA_UNIFIED_QR_LOGIN_ENABLED`；新增临时表可保留。原飞书本机登录入口保持可用。
 
-**本轮未合并、未切换生产、未迁移生产数据库。当前缺失的是服务器凭据和真实手机 OAuth 验收。**
+**PR 未合并，正式入口尚未切换。凭据、迁移和受控验收入口已经完成；剩余为真实手机 OAuth 验收和通过后的正式切换。**
 
 ## 验证
 
