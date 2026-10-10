@@ -20,6 +20,13 @@
 .oa-account-panel-heading button{display:grid;place-items:center;flex:none;width:36px;height:36px;padding:0;border:0;border-radius:8px;background:transparent;color:#476174;cursor:pointer}
 .oa-account-panel-heading button:hover{background:#edf4f7}
 .oa-account-panel-body{min-width:0}.oa-account-panel-body>p{margin:0 0 14px}
+.oa-account-connections{padding-bottom:16px;margin-bottom:8px;border-bottom:1px solid #e0e7ed}
+.oa-account-connections h3{margin:0 0 14px;font-size:15px;font-weight:650}
+.oa-account-binding-heading{display:flex;align-items:center;gap:9px;font-size:15px;color:#243b4e}
+.oa-account-connections p{margin:10px 0 0;line-height:1.65}
+.oa-account-binding-success{display:flex;align-items:flex-start;gap:8px;color:#26704f;font-size:14px}
+.oa-account-binding-success svg{flex:none;margin-top:3px}
+.oa-account-binding-qr{margin-top:14px;min-width:0}
 .oa-preference-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 0;border-bottom:1px solid #e7edf2;cursor:pointer}
 .oa-preference-row strong{display:block;font-size:14px;font-weight:600}.oa-preference-row small{display:block;color:#637486;font-size:12px;line-height:1.6;margin-top:3px}
 .oa-preference-row input{width:20px;height:20px;flex:none;accent-color:#3269a6}

@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, BookOpen, ChevronDown, HelpCircle, LogOut, Settings2, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { OaAccountProfile } from "./oa-account-profile";
+import { OaAccountConnections } from "./oa-account-connections";
 import "./oa-account-menu.css";
 import { OaInstallButton } from "./oa-pwa";
 
@@ -100,7 +101,8 @@ export function OaAccountMenu({ user, avatarDataUrl = "", roleLabel = "", onIden
               {([{ key: "largeText", label: "放大字体", detail: "让正文、输入框和资料更容易阅读" }, { key: "compact", label: "紧凑布局", detail: "减少工作台卡片和列表的间距" }, { key: "reduceMotion", label: "减少动画", detail: "减少弹层和界面的动态效果" }] as const).map(({ key, label, detail }) => <label className="oa-preference-row" key={key}><span><strong>{label}</strong><small>{detail}</small></span><input type="checkbox" checked={preferences[key]} onChange={(event) => updatePreference({ ...preferences, [key]: event.target.checked })} /></label>)}
               <button type="button" className="oa-account-secondary" onClick={() => updatePreference({ ...defaults })}>恢复默认</button>
             </> : panel === "help" ? <><p className="oa-account-muted">从工作台跟进任务，在审批中办理申请，在资料库查阅与提交资料。</p><a className="oa-account-link" href="/guide"><BookOpen size={18} />项目章程与使用指南</a></> : panel === "profile" && user && onIdentityChanged ? <OaAccountProfile key={user.email} user={user} onIdentityChanged={onIdentityChanged} /> : <>
-              <dl className="oa-account-details"><div><dt>姓名</dt><dd>{name}</dd></div><div><dt>登录方式</dt><dd>{user?.authProvider === "feishu" ? "飞书" : user?.authProvider === "github" ? "GitHub" : user?.authProvider === "chatgpt" ? "ChatGPT" : "OA 账号"}</dd></div>{roleLabel && <div><dt>身份</dt><dd>{roleLabel}</dd></div>}</dl>
+              {panel === "settings" && user && <OaAccountConnections key={user.email} />}
+              <dl className="oa-account-details"><div><dt>姓名</dt><dd>{name}</dd></div><div><dt>登录方式</dt><dd>{user?.authProvider === "feishu" ? "飞书" : user?.authProvider === "wecom" ? "企业微信" : user?.authProvider === "github" ? "GitHub" : user?.authProvider === "chatgpt" ? "ChatGPT" : "OA 账号"}</dd></div>{roleLabel && <div><dt>身份</dt><dd>{roleLabel}</dd></div>}</dl>
               {onIdentityChanged ? <button type="button" className="oa-account-secondary" onClick={openProfile}>编辑资料</button> : <p className="oa-account-muted">完成准入后可编辑。</p>}
               {panel === "settings" && <button type="button" className="oa-account-logout" disabled={loggingOut} onClick={() => void logout()}><LogOut size={18} />{loggingOut ? "正在退出…" : "退出登录"}</button>}
             </>}

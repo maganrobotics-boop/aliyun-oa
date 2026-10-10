@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { getDb, getD1Database } from "../../../db";
 import { memberSessions, members, oauthSessions } from "../../../db/schema";
 import { isChatGPTLoginEnabled } from "../../../lib/auth-capabilities";
+import { isWecomLoginEnabled } from "../../../lib/wecom-oauth";
 import { isFeishuLoginEnabled } from "../../../lib/feishu-oauth";
 import { isGitHubLoginEnabled } from "../../../lib/github-oauth";
 import { LEGACY_GITHUB_SESSION_COOKIE, OAUTH_SESSION_COOKIE } from "../../../lib/oauth-session";
@@ -21,7 +22,8 @@ export async function GET() {
   const chatgptLoginEnabled = isChatGPTLoginEnabled();
   const githubLoginEnabled = isGitHubLoginEnabled();
   const feishuLoginEnabled = isFeishuLoginEnabled();
-  const loginCapabilities = { chatgptLoginEnabled, githubLoginEnabled, feishuLoginEnabled };
+  const wecomLoginEnabled = isWecomLoginEnabled();
+  const loginCapabilities = { chatgptLoginEnabled, githubLoginEnabled, feishuLoginEnabled, wecomLoginEnabled };
   const authorized = await getAuthorizedUser();
   let canViewAllPersonnel=false;
   if(authorized?.ndaCompleted){try{const policy=await getReviewPolicy(await getD1Database());canViewAllPersonnel=Boolean(policy?.technical.some(person=>policyActor(person,authorized)));}catch{/* Fail closed for optional personnel access. */}}
@@ -49,7 +51,7 @@ export async function GET() {
   const publicIdentity = { email: identity.email, displayName: identity.displayName, authProvider: identity.authProvider };
   const [member] = await (await getDb()).select({ fullName: members.fullName, chatgptAccount: members.chatgptAccount, accountUserId: members.accountUserId, accountBindingPreviousStatus: members.accountBindingPreviousStatus, status: members.status, role: members.role }).from(members).where(eq(members.chatgptAccount, identity.email.toLowerCase())).limit(1);
   if (!member) return sessionJson({ registered: false, status: "unregistered", user: publicIdentity, role: null, canReviewMembers: false, canReviewKnowledge: false, canGrantMemberPermissions: false, isAdmin: false, isFinanceOwner: false, ndaCompleted: false, needsNda: false, migrationExportEnabled: false, migrationUnfreezeEnabled: false, ...loginCapabilities });
-  const isOAuthIdentity = identity.authProvider === "github" || identity.authProvider === "feishu";
+  const isOAuthIdentity = identity.authProvider === "github" || identity.authProvider === "feishu" || identity.authProvider === "wecom";
   const identityMatches = Boolean(identity.accountUserId && member.accountUserId === identity.accountUserId && (!isOAuthIdentity || identity.memberId));
   const externalIdentityLinkRequired = isOAuthIdentity && !identity.memberId;
   const githubIdentityLinkRequired = identity.authProvider === "github" && externalIdentityLinkRequired;
