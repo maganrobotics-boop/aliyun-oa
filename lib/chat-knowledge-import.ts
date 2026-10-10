@@ -8,7 +8,7 @@ import {
 } from "./knowledge-policy";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const CATEGORIES: Record<string, string> = { student: "课题参与", research: "科研交流", business: "合作咨询" };
+const CATEGORIES: Record<string, string> = { student: "课题参与", research: "科研交流", business: "合作咨询", weekly_report: "周报", meeting_minutes: "周会" };
 export const MAX_CHAT_KNOWLEDGE_IMPORT_BYTES = 5 * 1024 * 1024;
 
 function safePrefix(value: string, length: number): string {

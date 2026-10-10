@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { KnowledgeWeeklyDistribution } from "./weekly-distribution";
 import {
   AlertTriangle,
   BookOpen,
@@ -69,7 +70,7 @@ const knowledgeManageSortOptions: ReadonlyArray<{ value: KnowledgeListSort; labe
   { value: "title_desc", label: "标题 Z-A" },
 ];
 
-const categories = ["技术方案", "实验记录", "设备与操作", "软件与代码", "项目规范", "常见问题", "其他"];
+const categories = ["技术方案", "实验记录", "周报", "周会", "设备与操作", "软件与代码", "项目规范", "常见问题", "其他"];
 const emptyDraft = (): KnowledgeDraft => ({ title: "", category: categories[0], summary: "", content: "", sourceLabel: "", sourceUrl: "" });
 const PUBLIC_DATA_ANONYMIZATION_NOTICE = "所有公开的数据需要脱敏处理。脱敏时，论文和学位材料保留摘要、研究方法、实验过程、结果与结论等技术正文，删除封面、参考文献作者表、致谢、评语、签字页等身份信息密集内容；对于扫描件，仅保留匿名化摘要和检索说明，不嵌入含姓名、学号、签名、地址等个人隐私的原始图片。";
 
@@ -212,6 +213,7 @@ function KnowledgeItemCard({ item, onEdit, onDelete, deleting = false }: { item:
     {item.summary && <p className="knowledge-item-summary">{item.summary}</p>}
     <div className="knowledge-item-state"><span>{meta.detail}</span>{item.currentRevisionNo && <small>第 {item.currentRevisionNo} 版</small>}</div>
     {item.reviewNote && <div className="knowledge-review-note"><MessageCircle className="size-3.5" /><div><strong>审核意见</strong><p>{item.reviewNote}</p></div></div>}
+    {(item.status === "pending" || item.status === "active") && !item.sourceLabel?.startsWith("OA AI 成果归档 · ") && /周报|周会/.test(`${item.title} ${item.category}`) && <KnowledgeWeeklyDistribution itemId={item.id} />}
     <footer><time dateTime={item.updatedAt}>更新于 {formatDate(item.updatedAt)}</time>{item.status === "returned" && isMultipartImport ? <Button type="button" variant="outline" size="sm" onClick={() => onEdit?.(item)} disabled={!onEdit}><Pencil className="size-3.5" />在 OA 重新上传</Button> : item.status === "returned" && onEdit && <Button type="button" variant="outline" size="sm" onClick={() => onEdit(item)}><Pencil className="size-3.5" />修改并重提</Button>}{item.canDelete === true && onDelete && <Button type="button" variant="outline" size="sm" disabled={deleting} onClick={() => onDelete(item)}><Trash2 className="size-3.5" />{deleting ? "删除中…" : "删除"}</Button>}</footer>
   </article>;
 }
