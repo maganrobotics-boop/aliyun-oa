@@ -1,0 +1,213 @@
+{
+  "version": "course-project-selections-20261011-v2",
+  "baseline": "project-applications-20261011-v1",
+  "edits": [
+    {
+      "path": "lib/project-application.mjs",
+      "beforeSha256": "182007f1a20a1a7890d55e5a433c07899c2e084fba5eb7ef02c5d8bfb7072297",
+      "afterSha256": "12cf426db6a30ff4f75c1b8ee20f2860d8cc138c05d6e1f2d0abb9fe48d1da3f",
+      "edits": [
+        {
+          "start": 0,
+          "end": 0,
+          "lines": [
+            "import { industrialProjects } from './project-catalogue.mjs';\n"
+          ]
+        },
+        {
+          "start": 55,
+          "end": 56,
+          "lines": [
+            "export const PROJECT_APPLICATION_GUIDANCE = '参与实验室项目，请先查看官网现有的三个工业项目：'+industrialProjects.map(p=>`${p.title}（${p.url}）`).join('；')+'。请提供姓名、学校/专业/年级、课程成绩、个人介绍、技能与项目经历、项目意向和每周可投入时间。须先通过新手村最后一关；平台自动附上真实章节进度、作业记录、结业结果和助教点评。核对后提交给马淦老师，进入 OA 待处理。课程项目每学期只能选一个，选定后立即开放章节并通知 OA，无需等待报名审批。';\n"
+          ]
+        },
+        {
+          "start": 96,
+          "end": 98,
+          "lines": [
+            "export function applicationContent(fields, snapshot, { selection, labProjectId } = {}) {\n",
+            "  const project = industrialProjects.find(p => p.id === labProjectId);\n",
+            "  const prefix = selection ? `课程项目选题：${selection.semesterLabel}；选定后已开放对应章节，无需等待审批。\\n\\n` : project ? `实验室项目：${project.title}\\n官网介绍：${project.url}\\n\\n` : '';\n",
+            "  return prefix + [['姓名', fields.name], ['学校/专业/年级', fields.school], ['学生提供的课程成绩', fields.academicResults], ['个人介绍', fields.introduction], ['技能与项目经历', fields.experience], ['意向项目', fields.project], ['每周可投入时间', fields.availability], ['平台学习记录', learningSummary(snapshot)], ['记录时间', snapshot.capturedAt], ['成绩说明', '平台作业尚无统一数值评分；已提交、助教点评和结业通过分别记录。学生自述成绩及附件待老师核查。']].map(([label, value]) => `${label}：${value}`).join('\\n\\n');\n"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "lib/project-application-store.mjs",
+      "beforeSha256": "05293f1828eae4d7f4452ab2547cc23f5f6ffecf8a86ee3bd7b552eb5caa7534",
+      "afterSha256": "d32f8eb62e699021ef401fcfdb6ae8e7ad04af28267a8f038b3d8acc9fd91a68",
+      "edits": [
+        {
+          "start": 0,
+          "end": 0,
+          "lines": [
+            "import { academicSemester, courseProjects, industrialProjects } from './project-catalogue.mjs';\n"
+          ]
+        },
+        {
+          "start": 6,
+          "end": 7,
+          "lines": [
+            "function validateSnapshot(snapshot, requiresPass = true) {\n"
+          ]
+        },
+        {
+          "start": 9,
+          "end": 10,
+          "lines": [
+            "  if(requiresPass&&(snapshot.graduation?.status!=='passed'||snapshot.eligibility?.canApply!==true))applicationError('请先完成并通过新手村最后一关。',403);\n"
+          ]
+        },
+        {
+          "start": 17,
+          "end": 18,
+          "lines": [
+            "  return { kind: application.kind || 'lab_application', ...(application.selection ? { selection: application.selection } : {}), ...(application.labProjectId ? { labProjectId: application.labProjectId } : {}), id: row.id, status: row.status, project: application.fields.project, fields: application.fields, createdAt: row.created_at, updatedAt: row.updated_at, reviewerName: row.owner || row.current_reviewer_name || '马淦', returnNote: note, learningSummary: learningSummary(application.learning), snapshotAt: application.learning.capturedAt };\n"
+          ]
+        },
+        {
+          "start": 40,
+          "end": 43,
+          "lines": [
+            "    if (!exactKeys(data, ['operation', 'email', 'applicationId', 'submissionKey', 'fields', 'files', 'learning', 'content', 'confirmed', 'kind', 'selection', 'labProjectId']) || data.operation !== 'submit' || data.confirmed !== true) applicationError('申请格式不正确。');\n",
+            "    const kind = data.kind || 'lab_application';\n",
+            "    if (!['lab_application', 'course_project_selection'].includes(kind)) applicationError('项目类型不正确。');\n",
+            "    const isSelection = kind === 'course_project_selection';\n",
+            "    const id = applicationId(data.applicationId), submissionKey = applicationId(data.submissionKey), fields = validateApplicationFields(data.fields), files = validateApplicationFiles(data.files || []), learning = validateSnapshot(data.learning, !isSelection);\n",
+            "    let selection, labProjectId;\n",
+            "    if (isSelection) {\n",
+            "      const value = data.selection, semester = academicSemester(Date.parse(learning.capturedAt));\n",
+            "      const project = courseProjects.find(p => p.id === value?.courseId);\n",
+            "      if (!exactKeys(value, ['courseId','semesterId','semesterLabel']) || !project || value.semesterId !== semester.id || value.semesterLabel !== semester.label || fields.project !== project.title || files.length || data.labProjectId) applicationError('课程项目与学期信息不正确。');\n",
+            "      selection = { courseId: project.id, semesterId: semester.id, semesterLabel: semester.label };\n",
+            "      await db.prepare('CREATE TABLE IF NOT EXISTS project_course_selection_claims(email TEXT NOT NULL COLLATE NOCASE,semester_id TEXT NOT NULL,application_id TEXT NOT NULL UNIQUE,PRIMARY KEY(email,semester_id))').run();\n",
+            "      const reserved = await db.prepare('SELECT application_id FROM project_course_selection_claims WHERE email=? AND semester_id=?').bind(email, semester.id).first();\n",
+            "      if (reserved && reserved.application_id !== id) applicationError('本学期的课程项目已提交，每学期只能选择一个。', 409);\n",
+            "    } else {\n",
+            "      if (data.selection) applicationError('实验室申请格式不正确。');\n",
+            "      const project = industrialProjects.find(p => p.id === data.labProjectId);\n",
+            "      if (data.kind && (!project || fields.project !== project.title)) applicationError('请从官网三个工业项目中选择意向项目。');\n",
+            "      labProjectId = project?.id;\n",
+            "    }\n",
+            "    const content = applicationContent(fields, learning, { selection, labProjectId });\n"
+          ]
+        },
+        {
+          "start": 44,
+          "end": 45,
+          "lines": [
+            "    const requestHash = await applicationHash(JSON.stringify(data.kind ? { email, fields, files: data.files || [], learning, kind, selection, labProjectId } : { email, fields, files: data.files || [], learning }));\n"
+          ]
+        },
+        {
+          "start": 47,
+          "end": 48,
+          "lines": [
+            "    if (old && ((oldApplication?.kind || 'lab_application') !== kind || old.requester_email.toLowerCase() !== email || oldApplication?.version !== APPLICATION_VERSION || old.type !== '流转审批')) applicationError('未找到自己的项目申请。', 404);\n"
+          ]
+        },
+        {
+          "start": 52,
+          "end": 53,
+          "lines": [
+            "    if (old && (isSelection || old.status !== '已退回')) applicationError('这份申请已进入审核；只有退回后才可补充重交。', 409);\n"
+          ]
+        },
+        {
+          "start": 67,
+          "end": 70,
+          "lines": [
+            "    const body = { circulationContent: content, circulationRecipients: [], circulationApprovers: [approver], circulationConfirmations: [], circulationApprovals: [], initialReviewerEmail: reviewer.email, initialReviewerName: reviewer.name, workflowMutationRevision: mutation, projectApplication: { version: APPLICATION_VERSION, kind, ...(selection ? { selection } : {}), ...(labProjectId ? { labProjectId } : {}), source: 'learning_tutor', email, fields, learning, files: attachments, historicalFiles, submissionKey, requestHash, confirmedAt: at, identityNote: '登录邮箱由学习系统验证；姓名、成绩及项目经历由学生提供，待老师核查。' } };\n",
+            "    const row = { id, type: '流转审批', title: `${isSelection ? '课程选题' : '实验室报名'} · ${fields.name} · ${fields.project}`.slice(0, 160), project: isSelection ? 'OriginMind 课程项目选题' : 'OriginMind × ARTS Robotics 实验室报名', requesterName: fields.name, requesterEmail: email, clientCreationKey: old?.client_creation_key || `learning-project:${id}`, businessKey: isSelection ? `learning-course:${await applicationHash(email+'|'+selection.semesterId)}` : null, createdAt: old?.created_at || at, updatedAt: at, status: '待审核', currentStep: '指定审批', currentReviewerName: reviewer.name, currentReviewerEmail: reviewer.email, summary: `${selection ? selection.semesterLabel + ' · 已开放章节；' : '意向：'}${fields.project}。${learningSummary(learning)}`, owner: reviewer.name, amount: null, periodKey: null, signersJson: '[]', payloadJson: JSON.stringify(body) };\n",
+            "    const event = { actorName: fields.name, actorEmail: email, action: old ? 'resubmitted' : 'submitted', note: isSelection ? '学生已选定本学期课程项目，对应章节立即开放；通知马淦待处理。' : old ? '学生在课程助教核对补充材料并确认重新提交。' : '学生在课程助教核对报名材料并确认提交给马淦。', occurredAt: at };\n"
+          ]
+        },
+        {
+          "start": 75,
+          "end": 75,
+          "lines": [
+            "    const quotaGuard = isSelection ? ' AND NOT EXISTS(SELECT 1 FROM project_course_selection_claims WHERE email=? AND semester_id=? AND application_id!=?)' : '';\n",
+            "    const quotaArgs = isSelection ? [email, selection.semesterId, id] : [];\n"
+          ]
+        },
+        {
+          "start": 77,
+          "end": 78,
+          "lines": [
+            "      : db.prepare(`INSERT OR IGNORE INTO approvals(${columns.join(',')}) SELECT ${keys.map(() => '?').join(',')} WHERE ${reviewerGuard}${quotaGuard}`).bind(...keys.map(key => row[key]), ...reviewerArgs, ...quotaArgs);\n"
+          ]
+        },
+        {
+          "start": 82,
+          "end": 83,
+          "lines": [
+            "    const claimSelection = isSelection ? [db.prepare(`INSERT OR IGNORE INTO project_course_selection_claims(email,semester_id,application_id) SELECT ?,?,id FROM approvals WHERE ${mutationGuard}`).bind(email, selection.semesterId, ...mutationArgs)] : [];\n",
+            "    const results = await db.batch([persist, ...revisionWrites, eventWrite, ...claimSelection]);\n"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "lib/project-application-replies.mjs",
+      "beforeSha256": "1f931a4a724a26ec623fdcf550ef7a7e2e6cbd38edeebdfa6edc7b94923bb864",
+      "afterSha256": "865e4678bd7d465c939be6dd3bc4771811063dfc9d8594b50994fecf943c6a57",
+      "edits": [
+        {
+          "start": 32,
+          "end": 33,
+          "lines": [
+            "    if (application.kind !== 'course_project_selection' && application.learning.graduation?.status !== 'passed') applicationError('学生尚未通过新手村最后一关。', 403);\n"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "components/project-application-details.tsx",
+      "beforeSha256": "a7fbf424f91314df6af5960e1fdec5893ee54479883e311d6aa8c3ff50758bd3",
+      "afterSha256": "e024c7aad3eec9b92b250009a8c4171f400ad7ee34a53f8e50cbd733b8305d4d",
+      "edits": [
+        {
+          "start": 2,
+          "end": 2,
+          "lines": [
+            "import { industrialProjects } from '../lib/project-catalogue.mjs';\n"
+          ]
+        },
+        {
+          "start": 5,
+          "end": 6,
+          "lines": [
+            "type Application = { version: number; kind?: string; labProjectId?: string; selection?: { courseId: string; semesterId: string; semesterLabel: string }; learning: Learning; files: { id: string; name: string; size: number }[]; identityNote: string };\n"
+          ]
+        },
+        {
+          "start": 15,
+          "end": 16,
+          "lines": [
+            "  const learning = application.learning, isSelection = application.kind === 'course_project_selection', industrialProject = industrialProjects.find(p => p.id === application.labProjectId);\n"
+          ]
+        },
+        {
+          "start": 33,
+          "end": 33,
+          "lines": [
+            "    {isSelection && application.selection && <div className=\"project-selection-receipt\"><h3>本学期课程选题</h3><p>{application.selection.semesterLabel} · {learning.catalogue.find(c => c.id === application.selection?.courseId)?.title || application.selection.courseId}</p><p>学生每学期只可选一个课程项目。该项目章节已在选定时开放，此待办用于确认选题、安排项目工作与回复学生。</p></div>}\n",
+            "    {industrialProject && <div><h3>实验室项目意向</h3><p>{industrialProject.title} · {industrialProject.stage}</p><a href={industrialProject.url} target=\"_blank\" rel=\"noopener noreferrer\">查看官网项目介绍</a></div>}\n"
+          ]
+        },
+        {
+          "start": 41,
+          "end": 42,
+          "lines": [
+            "    {canReply && <div className=\"project-application-reply\"><h3>回复学生并开通课程</h3><p>课程项目在选定后立即开放，无需等待审批。您可以按参与项目的需要另行开通课程。</p>{['待审核', '已归档'].includes(status || '') && <form onSubmit={event => { event.preventDefault(); void send(); }}><label>回复学生<textarea required minLength={2} maxLength={1000} rows={4} value={reply} disabled={busy} onChange={event => { setReply(event.target.value); pending.current = null; }} placeholder=\"填写项目安排及需要学习的课程\" /></label><fieldset disabled={busy}><legend>选择开通的课程（可不选）</legend>{learning.catalogue?.filter(c => !c.openWithoutApplication && c.id !== 'graduation').map(course => <label key={course.id}><input type=\"checkbox\" checked={selected.includes(course.id)} onChange={event => { setSelected(event.target.checked ? [...selected, course.id] : selected.filter(id => id !== course.id)); pending.current = null; }} />{course.title}</label>)}</fieldset><button type=\"submit\" disabled={busy}>{status === '待审核' ? isSelection ? '确认选题、回复并开通所选课程' : '批准、回复并开通所选课程' : '回复并开通所选课程'}</button></form>}<p role=\"status\" aria-live=\"polite\">{message}</p>{replies.map(record => <article key={record.id}><p>{record.reply}</p><p>{record.courseIds.map(id => learning.catalogue?.find(c => c.id === id)?.title || id).join('、') || '未额外开通课程'} · {record.state === 'delivered' ? '已同步给学生' : '待同步'}</p>{record.state !== 'delivered' && <button disabled={busy} onClick={() => void send(record)}>重试同步此回复</button>}</article>)}</div>}\n"
+          ]
+        }
+      ]
+    }
+  ],
+  "newFiles": [
+    "lib/project-catalogue.mjs",
+    "lib/project-catalogue.d.mts"
+  ]
+}
