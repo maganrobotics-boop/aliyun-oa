@@ -38,7 +38,8 @@
 .oa-app.oa-workspace .oa-upload-compact .oa-upload-toolbar h2 { margin:0; font-size:16px; line-height:1.4; }
 .oa-upload-toolbar p { margin:4px 0 0; font-size:12px; color:#627891; line-height:1.5; }
 .oa-upload-buttons { display:flex; gap:8px; flex-wrap:wrap; }
-.oa-upload-buttons > button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:44px; padding:9px 14px; border-radius:9px; font-size:14px; font-weight:600; }
+.oa-upload-buttons > button, .oa-upload-buttons > a { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:44px; padding:9px 14px; border-radius:9px; font-size:14px; font-weight:600; text-decoration:none; }
+.oa-upload-buttons > a:focus-visible { outline:2px solid #2558c8; outline-offset:3px; }
 .oa-upload-buttons .oa-upload-primary { color:#fff; background:#2558c8; border:1px solid #2558c8; }
 .oa-upload-buttons .oa-upload-folder { color:#486a96; background:#fff; border:1px solid #d7e1ed; }
 .oa-upload-buttons > button:disabled { opacity:.55; cursor:wait; }
@@ -53,7 +54,7 @@
  .oa-app.oa-workspace .oa-generic-source.oa-upload-compact { padding:12px; margin:8px 0 12px; }
  .oa-upload-toolbar { gap:10px; }
  .oa-upload-buttons { flex:1 0 100%; }
- .oa-upload-buttons .oa-upload-primary { flex:1; }
+ .oa-upload-toolbar .oa-upload-buttons > * { flex:1; }
 }
 .oa-knowledge-draft-fields { display: grid; gap: 12px; margin: 12px 0; }
 .oa-knowledge-draft-fields label { display: grid; gap: 6px; min-width: 0; }
