@@ -1,0 +1,70 @@
+name: Check OA assistant material intake
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/personnel-*'
+      - 'lib/ai-workbench-store.ts'
+      - 'aliyun/ai-members/**'
+      - 'app/api/personnel-materials/**'
+      - 'app/api/lab-ai/ask/**'
+      - 'app/people-workbench/**'
+      - 'components/ai-member-*.tsx'
+      - 'components/knowledge/personnel-material-receipt.tsx'
+      - 'components/knowledge/oa-chat-documents.tsx'
+      - 'migrations/personnel-*.sql'
+      - 'scripts/aliyun-migrate.mjs'
+      - 'scripts/*personnel-material-browser*.mjs'
+      - 'tests/personnel-material-intake.test.mjs'
+      - '.github/workflows/check-personnel-materials.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personnel-materials-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm run install:ci
+      - name: Check OA types
+        run: npm run typecheck
+      - name: Lint changed application components
+        run: npx --no-install eslint app/api/personnel-materials/route.ts app/api/lab-ai/ask/route.ts app/people-workbench/page.tsx app/people-workbench/workflow-panel.tsx components/ai-member-interaction.tsx components/ai-member-directory.tsx components/knowledge/personnel-material-receipt.tsx components/knowledge/oa-chat-documents.tsx lib/ai-workbench-store.ts
+      - name: Verify intake, native confirmation, review and ledger regression
+        run: node --test --test-concurrency=1 tests/personnel-material-intake.test.mjs tests/personnel-auto-weekly.test.mjs tests/expense-ledger.test.mjs tests/ai-workbench-api.test.mjs
+      - name: Build the Aliyun OA application
+        run: npm run build:aliyun
+      - name: Build actual assistant and confirmation components for browser acceptance
+        run: node scripts/build-personnel-material-browser-fixture.mjs
+      - name: Install isolated browser engine
+        run: |
+          npm install --prefix "$RUNNER_TEMP/personnel-material-browser" --no-save --ignore-scripts playwright@1.63.0
+          node "$RUNNER_TEMP/personnel-material-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Verify default attachments, duplicate recovery, queries and self confirmation
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/personnel-material-browser/node_modules/playwright/index.mjs
+        run: node scripts/check-personnel-material-browser.mjs
+      - name: Preserve isolated browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: personnel-material-browser-${{ github.sha }}
+          path: |
+            parity-validation/personnel-material-browser-app/
+            parity-validation/personnel-material-browser-report/
+          if-no-files-found: warn
+          retention-days: 7
