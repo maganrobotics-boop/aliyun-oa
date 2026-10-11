@@ -1,0 +1,67 @@
+{
+  "version": "course-project-identity-20261011-v3",
+  "baseline": "course-projects-20261011-v2",
+  "edits": [
+    {
+      "path": "lib/project-application.mjs",
+      "beforeSha256": "12cf426db6a30ff4f75c1b8ee20f2860d8cc138c05d6e1f2d0abb9fe48d1da3f",
+      "afterSha256": "c18fe4a4e9800fdf27007236b8a583f0c0d0e5ed732b2a27959c9f58f2b948bf",
+      "edits": [
+        {
+          "start": 99,
+          "end": 100,
+          "lines": [
+            "  const prefix = selection ? `课程项目选题：${selection.semesterLabel}；选定后已开放对应章节，无需等待审批。${selection.studentNumber ? '\\n学号：'+selection.studentNumber : ''}\\n\\n` : project ? `实验室项目：${project.title}\\n官网介绍：${project.url}\\n\\n` : '';\n"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "lib/project-application-store.mjs",
+      "beforeSha256": "d32f8eb62e699021ef401fcfdb6ae8e7ad04af28267a8f038b3d8acc9fd91a68",
+      "afterSha256": "674c044b0506e8c2f5bc9a5016bb48fcd1efbdccee4ceb14f05a9609d390594f",
+      "edits": [
+        {
+          "start": 50,
+          "end": 52,
+          "lines": [
+            "      if (!exactKeys(value, ['courseId','semesterId','semesterLabel','studentNumber']) || !project || value.semesterId !== semester.id || value.semesterLabel !== semester.label || fields.project !== project.title || files.length || data.labProjectId) applicationError('课程项目与学期信息不正确。');\n",
+            "      const studentNumber = value.studentNumber ? applicationText(value.studentNumber,40,'学号',2) : '';\n",
+            "      if (studentNumber && !/^[A-Za-z0-9._-]{2,40}$/u.test(studentNumber)) applicationError('学号格式不正确。');\n",
+            "      selection = { courseId: project.id, semesterId: semester.id, semesterLabel: semester.label, ...(studentNumber ? { studentNumber } : {}) };\n"
+          ]
+        },
+        {
+          "start": 86,
+          "end": 88,
+          "lines": [
+            "    const body = { circulationContent: content, circulationRecipients: [], circulationApprovers: [approver], circulationConfirmations: [], circulationApprovals: [], initialReviewerEmail: reviewer.email, initialReviewerName: reviewer.name, workflowMutationRevision: mutation, projectApplication: { version: APPLICATION_VERSION, kind, ...(selection ? { selection } : {}), ...(labProjectId ? { labProjectId } : {}), source: 'learning_tutor', email, fields, learning, files: attachments, historicalFiles, submissionKey, requestHash, confirmedAt: at, identityNote: '登录邮箱由学习系统验证；姓名、学号、成绩及项目经历由学生提供，待老师核查。' } };\n",
+            "    const row = { id, type: '流转审批', title: `${isSelection ? '课程选题' : '实验室报名'} · ${fields.name} · ${fields.project}`.slice(0, 160), project: isSelection ? 'OriginMind 课程项目选题' : 'OriginMind × ARTS Robotics 实验室报名', requesterName: fields.name, requesterEmail: email, clientCreationKey: old?.client_creation_key || `learning-project:${id}`, businessKey: isSelection ? `learning-course:${await applicationHash(email+'|'+selection.semesterId)}` : null, createdAt: old?.created_at || at, updatedAt: at, status: '待审核', currentStep: '指定审批', currentReviewerName: reviewer.name, currentReviewerEmail: reviewer.email, summary: `${selection?.studentNumber ? '学号：'+selection.studentNumber+'；' : ''}${selection ? selection.semesterLabel + ' · 已开放章节；' : '意向：'}${fields.project}。${learningSummary(learning)}`, owner: reviewer.name, amount: null, periodKey: null, signersJson: '[]', payloadJson: JSON.stringify(body) };\n"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "components/project-application-details.tsx",
+      "beforeSha256": "e024c7aad3eec9b92b250009a8c4171f400ad7ee34a53f8e50cbd733b8305d4d",
+      "afterSha256": "97d9a9eeeaf9e7adcc7dd6c359bed847a24e429ba3c679546a914d21037f7d64",
+      "edits": [
+        {
+          "start": 6,
+          "end": 7,
+          "lines": [
+            "type Application = { version: number; kind?: string; labProjectId?: string; selection?: { courseId: string; semesterId: string; semesterLabel: string; studentNumber?: string }; learning: Learning; files: { id: string; name: string; size: number }[]; identityNote: string };\n"
+          ]
+        },
+        {
+          "start": 34,
+          "end": 35,
+          "lines": [
+            "    {isSelection && application.selection && <div className=\"project-selection-receipt\"><h3>本学期课程选题</h3><p>{application.selection.semesterLabel} · {learning.catalogue.find(c => c.id === application.selection?.courseId)?.title || application.selection.courseId}</p><p>学号：{application.selection.studentNumber || '尚未提供'}。</p><p>学生每学期只可选一个课程项目。该项目章节已在选定时开放，此待办用于确认选题、安排项目工作与回复学生。</p></div>}\n"
+          ]
+        }
+      ]
+    }
+  ],
+  "newFiles": []
+}

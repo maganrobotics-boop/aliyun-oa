@@ -4,7 +4,7 @@ import { industrialProjects } from '../lib/project-catalogue.mjs';
 
 type Chapter = { id: string; title: string; index: number; submissions: number; reviewed: number };
 type Learning = { capturedAt: string; totalChapters: number; submittedChapters: number; submissionCount: number; reviewedCount: number; currentChapter: { index: number; title: string } | null; chapters: Chapter[]; graduation: { status: string; attempts: number; checks?: { id: string; title: string; passed: boolean }[] }; reviews: { id: string; chapter: string; review: string }[]; gradeNote: string; catalogue: { id: string; title: string; parentId?: string; openWithoutApplication?: boolean }[] };
-type Application = { version: number; kind?: string; labProjectId?: string; selection?: { courseId: string; semesterId: string; semesterLabel: string }; learning: Learning; files: { id: string; name: string; size: number }[]; identityNote: string };
+type Application = { version: number; kind?: string; labProjectId?: string; selection?: { courseId: string; semesterId: string; semesterLabel: string; studentNumber?: string }; learning: Learning; files: { id: string; name: string; size: number }[]; identityNote: string };
 type Reply = { id: string; reply: string; courseIds: string[]; state: string; createdAt: number };
 export function ProjectApplicationDetails({ id, payload, status, currentEmail, onChanged }: { id: string; payload?: Record<string, unknown>; status?: string; currentEmail?: string; onChanged?: () => void }) {
   const application = payload?.projectApplication as Application | undefined;
@@ -32,7 +32,7 @@ export function ProjectApplicationDetails({ id, payload, status, currentEmail, o
     finally { setBusy(false); }
   };
   return <section className="detail-section project-application-details" aria-label="项目报名材料与平台成绩">
-    {isSelection && application.selection && <div className="project-selection-receipt"><h3>本学期课程选题</h3><p>{application.selection.semesterLabel} · {learning.catalogue.find(c => c.id === application.selection?.courseId)?.title || application.selection.courseId}</p><p>学生每学期只可选一个课程项目。该项目章节已在选定时开放，此待办用于确认选题、安排项目工作与回复学生。</p></div>}
+    {isSelection && application.selection && <div className="project-selection-receipt"><h3>本学期课程选题</h3><p>{application.selection.semesterLabel} · {learning.catalogue.find(c => c.id === application.selection?.courseId)?.title || application.selection.courseId}</p><p>学号：{application.selection.studentNumber || '尚未提供'}。</p><p>学生每学期只可选一个课程项目。该项目章节已在选定时开放，此待办用于确认选题、安排项目工作与回复学生。</p></div>}
     {industrialProject && <div><h3>实验室项目意向</h3><p>{industrialProject.title} · {industrialProject.stage}</p><a href={industrialProject.url} target="_blank" rel="noopener noreferrer">查看官网项目介绍</a></div>}
     <h3>平台学习进度与成绩</h3>
     <p>{learning.currentChapter ? `最近学习第 ${learning.currentChapter.index} 章：${learning.currentChapter.title}` : '暂无章节学习记录'}。已提交 {learning.submittedChapters}/{learning.totalChapters} 章，{learning.submissionCount} 份作业，{learning.reviewedCount} 份已有助教点评。</p>

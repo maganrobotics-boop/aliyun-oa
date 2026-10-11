@@ -14,7 +14,7 @@ for entry in manifest['edits']:
  if digest(data)!=entry['afterSha256']:raise SystemExit('Patch hash mismatch')
  planned[p]=data
 for name in manifest['newFiles']:
- p=target/name;data=(source/name).read_bytes()
+ p=target/name;archived=Path(__file__).parent/'modules'/name;data=(archived if archived.exists() else source/name).read_bytes()
  if p.exists() and p.read_bytes()!=data:raise SystemExit('Conflicting module: '+name)
  planned[p]=data
 for p,data in planned.items():p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data)
