@@ -15,6 +15,7 @@ on:
       - 'components/knowledge/oa-chat-documents.tsx'
       - 'migrations/personnel-*.sql'
       - 'scripts/aliyun-migrate.mjs'
+      - 'scripts/*personnel-material-browser*.mjs'
       - 'tests/personnel-material-intake.test.mjs'
       - '.github/workflows/check-personnel-materials.yml'
 
@@ -47,3 +48,23 @@ jobs:
         run: node --test --test-concurrency=1 tests/personnel-material-intake.test.mjs tests/personnel-auto-weekly.test.mjs tests/expense-ledger.test.mjs tests/ai-workbench-api.test.mjs
       - name: Build the Aliyun OA application
         run: npm run build:aliyun
+      - name: Build actual assistant and confirmation components for browser acceptance
+        run: node scripts/build-personnel-material-browser-fixture.mjs
+      - name: Install isolated browser engine
+        run: |
+          npm install --prefix "$RUNNER_TEMP/personnel-material-browser" --no-save --ignore-scripts playwright@1.63.0
+          node "$RUNNER_TEMP/personnel-material-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Verify default attachments, duplicate recovery, queries and self confirmation
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/personnel-material-browser/node_modules/playwright/index.mjs
+        run: node scripts/check-personnel-material-browser.mjs
+      - name: Preserve isolated browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: personnel-material-browser-${{ github.sha }}
+          path: |
+            parity-validation/personnel-material-browser-app/
+            parity-validation/personnel-material-browser-report/
+          if-no-files-found: warn
+          retention-days: 7
