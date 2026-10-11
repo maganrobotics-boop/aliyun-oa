@@ -1,0 +1,68 @@
+{
+  "version": "course-project-menu-20261011-v4",
+  "baseline": "course-identity-20261011-v3",
+  "edits": [
+    {
+      "path": "lib/project-application-store.mjs",
+      "beforeSha256": "674c044b0506e8c2f5bc9a5016bb48fcd1efbdccee4ceb14f05a9609d390594f",
+      "afterSha256": "ba0df67636529850360f6ef0ef01e60fece56713b90336d750329f5e999afcac",
+      "edits": [
+        {
+          "start": 41,
+          "end": 42,
+          "lines": [
+            "    if (!exactKeys(data, ['operation', 'email', 'applicationId', 'submissionKey', 'fields', 'files', 'learning', 'content', 'confirmed', 'kind', 'selection', 'labProjectId', 'updateIdentity']) || data.operation !== 'submit' || data.confirmed !== true) applicationError('申请格式不正确。');\n"
+          ]
+        },
+        {
+          "start": 45,
+          "end": 45,
+          "lines": [
+            "    if (data.updateIdentity !== undefined && (data.updateIdentity !== true || !isSelection)) applicationError('身份补充格式不正确。');\n"
+          ]
+        },
+        {
+          "start": 73,
+          "end": 74,
+          "lines": [
+            "    const identityUpdate = Boolean(old && isSelection && data.updateIdentity === true);\n",
+            "    if (identityUpdate) {\n",
+            "      const oldSelection=oldApplication.selection,oldFields=oldApplication.fields;\n",
+            "      if (old.status !== '待审核' || oldSelection?.studentNumber || oldSelection?.courseId !== selection.courseId || oldSelection?.semesterId !== selection.semesterId || !selection.studentNumber || JSON.stringify(learning) !== JSON.stringify(oldApplication.learning) || Object.keys(oldFields).some(key=>key!=='name' && oldFields[key]!==fields[key])) applicationError('这份选题不能补充身份资料，请联系马淦老师。',409);\n",
+            "    }\n",
+            "    if (old && !identityUpdate && (isSelection || old.status !== '已退回')) applicationError('这份申请已进入审核；只有退回后才可补充重交。', 409);\n"
+          ]
+        },
+        {
+          "start": 76,
+          "end": 76,
+          "lines": [
+            "    if (identityUpdate && old.current_reviewer_email !== reviewer?.email) applicationError('选题审核人已变化，请联系老师补充身份资料。',409);\n"
+          ]
+        },
+        {
+          "start": 90,
+          "end": 91,
+          "lines": [
+            "    const event = { actorName: fields.name, actorEmail: email, action: identityUpdate ? 'student_identity_updated' : old ? 'resubmitted' : 'submitted', note: identityUpdate ? '学生补齐课程选题的姓名、学号，原项目、学期、学习记录和章节权限保持不变。' : isSelection ? '学生已选定本学期课程项目，对应章节立即开放；通知马淦待处理。' : old ? '学生在课程助教核对补充材料并确认重新提交。' : '学生在课程助教核对报名材料并确认提交给马淦。', occurredAt: at };\n"
+          ]
+        },
+        {
+          "start": 99,
+          "end": 100,
+          "lines": [
+            "      ? db.prepare(`UPDATE approvals SET ${columns.map(column => `${column}=?`).join(',')} WHERE id=? AND requester_email=? AND status=? AND current_revision_no=? AND current_revision_hash IS ? AND payload_json=? AND ${reviewerGuard}`).bind(...keys.map(key => row[key]), id, old.requester_email, old.status, old.current_revision_no, old.current_revision_hash, old.payload_json, ...reviewerArgs)\n"
+          ]
+        },
+        {
+          "start": 105,
+          "end": 106,
+          "lines": [
+            "    const claimSelection = isSelection && !old ? [db.prepare(`INSERT OR IGNORE INTO project_course_selection_claims(email,semester_id,application_id) SELECT ?,?,id FROM approvals WHERE ${mutationGuard}`).bind(email, selection.semesterId, ...mutationArgs)] : [];\n"
+          ]
+        }
+      ]
+    }
+  ],
+  "newFiles": []
+}
