@@ -707,4 +707,3 @@ test("provider disablement, rate limiting and malformed requests fail closed", a
   assert.equal((await invoke(service.scanQrLogin, phone, "/api/auth/qr/scan", { method: "POST", data: { id: "short", provider: "feishu" } })).status, 400);
   assert.equal(count("oauth_sessions"), 0);
 });
-

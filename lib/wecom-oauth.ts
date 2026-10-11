@@ -167,4 +167,3 @@ export async function exchangeWecomCode(config: WecomOAuthConfig, code: string):
     displayName: displayName || "企业微信成员",
   };
 }
-

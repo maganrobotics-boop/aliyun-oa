@@ -257,4 +257,3 @@ test("WeCom remains disabled with missing settings or unsafe public origins", ()
   process.env.WECOM_LOGIN_AGENT_ID = "not-an-agent";
   assert.equal(oauth.isWecomLoginEnabled(), false);
 });
-

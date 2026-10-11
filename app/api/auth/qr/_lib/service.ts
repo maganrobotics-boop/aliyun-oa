@@ -332,4 +332,3 @@ export async function cancelQrLogin(request: Request) { return guarded(async () 
     eq(qrLoginChallenges.id, context.challenge.id), ne(qrLoginChallenges.status, "consumed")));
   return json({ ok: true });
 }); }
-
