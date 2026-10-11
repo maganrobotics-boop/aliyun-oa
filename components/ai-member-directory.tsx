@@ -55,7 +55,6 @@ export function OaAiMemberProvider({ children, onTeamChat }: { children: ReactNo
   const afterPickerClose = useRef<(() => void) | null>(null);
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError('');
     void fetch('/api/ai-members/directory', { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' }, signal: controller.signal })
       .then(async response => {
         const data = await response.json() as { members?: DirectoryRecord[]; canViewAudit?: boolean; error?: string };
@@ -78,7 +77,7 @@ export function OaAiMemberProvider({ children, onTeamChat }: { children: ReactNo
     if (pickerOpen) { afterPickerClose.current = open; setPickerOpen(false); } else open();
   };
   const openDestination = (action: () => void) => { afterPickerClose.current = action; setPickerOpen(false); };
-  return <WorkspaceContext.Provider value={{ members, loading, error, canViewAudit, reload: () => setReloadKey(value => value + 1), openPicker: () => setPickerOpen(true), openMember }}>
+  return <WorkspaceContext.Provider value={{ members, loading, error, canViewAudit, reload: () => { setLoading(true); setError(''); setReloadKey(value => value + 1); }, openPicker: () => setPickerOpen(true), openMember }}>
     {children}
     <Dialog open={pickerOpen} onOpenChange={setPickerOpen}><DialogContent className="oa-chat-picker" onCloseAutoFocus={event => { const action = afterPickerClose.current; if (action) { event.preventDefault(); afterPickerClose.current = null; window.requestAnimationFrame(action); } }}><DialogHeader><DialogTitle>开始聊天</DialogTitle><DialogDescription>选择 AI 伙伴；每个角色分别保存与您的对话。</DialogDescription></DialogHeader>
       <AiMemberChatChoices />
