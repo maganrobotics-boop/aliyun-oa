@@ -43,8 +43,10 @@ function withServerTiming(response: Response, timings: RequestTimings, totalStar
 }
 function normalizedQuestion(value: unknown): string | null {
   if (typeof value !== "string" || !isWellFormedUnicode(value)) return null;
-  // Keep pasted material's person/category headings on separate lines.
-  const question = value.normalize("NFKC").replace(/\r\n?/gu, "\n").replace(/[^\S\n]+/gu, " ").trim();
+  // Intake hashes the original material. Preserve its punctuation and spacing
+  // so a pasted copy shares the receipt created by an attachment upload.
+  const source = value.replace(/\r\n?/gu, "\n").trim();
+  const question = isPersonnelMaterialMessage(source) ? source : source.normalize("NFKC").replace(/[^\S\n]+/gu, " ");
   return question.length >= 2 && question.length <= MAX_QUESTION_LENGTH ? question : null;
 }
 function parseHistory(value: unknown): OaChatHistory | null {

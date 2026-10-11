@@ -14,6 +14,8 @@ import { AiMemberStore, createAiMembersHandler } from '../aliyun/ai-members/ai-m
 register(new URL('./helpers/ai-workbench-loader.mjs',import.meta.url));
 const api=await import('../app/api/personnel-materials/route.ts');
 const { createTask }=await import('../lib/ai-workbench-store.ts');
+register(new URL('./helpers/personnel-material-ask-loader.mjs',import.meta.url));
+const askApi=await import('../app/api/lab-ai/ask/route.ts');
 const text='# 9月工作与采购材料\n## 陈绿平\n### 采购账单\n购买导航线缆，发票原金额 128 元。\n### 从事的工作\n联调定位接口，负责真机实验。\n### 取得的成果\n完成重定位回归验证，日志已提交。\n## 林子昕\n### 从事的工作\n测试抓取模块，记录失败样例。\n### 取得的成果\n成功复现抓取实验，真机连续测试待补充。';
 const roster=[{id:'a',name:'陈绿平',accountUserId:'account-a',email:'a@example.com'},{id:'b',name:'林子昕',accountUserId:'account-b',email:'b@example.com'}];
 function fixture(){
@@ -67,6 +69,18 @@ test('repeat delivery keeps confirmed/edited content, original source and one au
   const r=await Promise.all([intakePersonnelMaterial(f.db,f.actor('sender'),raceInput),intakePersonnelMaterial(f.db,f.actor('sender'),raceInput)]);assert.equal(r[0].id,r[1].id);
   assert.equal(f.sqlite.prepare("SELECT count(*) n FROM expense_events WHERE action='work_auto_create'").get().n,4);
  }finally{f.sqlite.close();}
+});
+test('pasting an uploaded material preserves full-width punctuation, spacing and the existing receipt',async()=>{
+ const f=fixture();try{
+  const raw=text.replace('128 元','１２８  元');
+  const receipt=await intakePersonnelMaterial(f.db,f.actor('sender'),{title:'原始附件',text:raw});
+  globalThis.__aiWorkbenchTest={env:{DB:f.db},actor:f.actor('sender')};
+  const response=await askApi.POST(new Request('https://oa.test/api/lab-ai/ask',{method:'POST',headers:{origin:'https://oa.test','content-type':'application/json'},body:JSON.stringify({question:'\n'+raw.replaceAll('\n','\r\n')+'\n',history:[]})}));
+  assert.equal(response.status,200);assert.match((await response.json()).answer,new RegExp(receipt.id));
+  assert.equal(f.sqlite.prepare('SELECT count(*) n FROM personnel_material_intakes').get().n,1);
+  assert.equal(f.sqlite.prepare('SELECT source_text FROM personnel_material_intakes').get().source_text,raw);
+  assert.equal(f.sqlite.prepare('SELECT count(*) n FROM personnel_weekly_entries').get().n,2);
+ }finally{delete globalThis.__aiWorkbenchTest;f.sqlite.close();}
 });
 test('an NDA revoked after parsing excludes that person; sender revocation, maintenance freeze and partial write failures cannot give false success',async()=>{
  for(const mode of ['recipient','sender','freeze','disk']){
