@@ -1,6 +1,8 @@
 import { privateAnswerStream, checkStreamAbort } from '../../../../lib/oa-native-stream.mjs';
 import { getDb, getD1Database } from "../../../../db";
 import { answerPersonnelQuestion } from "../../../../lib/personnel-chat.mjs";
+import { isPersonnelMaterialMessage } from "../../../../lib/personnel-material.mjs";
+import { intakePersonnelMaterial, materialReceiptAnswer } from "../../../../lib/personnel-material-store.mjs";
 import { readBoundedJsonObject } from "../../../../lib/bounded-json-request";
 import { answerOaChatQuestion, questionRequestsKnowledgeImages, type OaChatHistory } from "../../../../lib/oa-chat-client";
 import { isWellFormedUnicode, rankKnowledgeChunks } from "../../../../lib/knowledge-policy";
@@ -41,7 +43,10 @@ function withServerTiming(response: Response, timings: RequestTimings, totalStar
 }
 function normalizedQuestion(value: unknown): string | null {
   if (typeof value !== "string" || !isWellFormedUnicode(value)) return null;
-  const question = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  // Intake hashes the original material. Preserve its punctuation and spacing
+  // so a pasted copy shares the receipt created by an attachment upload.
+  const source = value.replace(/\r\n?/gu, "\n").trim();
+  const question = isPersonnelMaterialMessage(source) ? source : source.normalize("NFKC").replace(/[^\S\n]+/gu, " ");
   return question.length >= 2 && question.length <= MAX_QUESTION_LENGTH ? question : null;
 }
 function parseHistory(value: unknown): OaChatHistory | null {
@@ -78,7 +83,12 @@ export async function POST(request: Request) {
   try {
     const db = await getDb();
     if (!(await consumeWriteRateLimit(db, { actorSubject: authorized.accountUserId, scope: "lab_ai_ask", limit: MAX_QUESTIONS_PER_MINUTE }))) return finish(privateJson({ error: "提问过于频繁，请稍后再试。" }, { status: 429, headers: { "retry-after": "60" } }));
-    const personnel = await answerPersonnelQuestion(await getD1Database(), authorized, question, history);
+    const personnelDb = await getD1Database();
+    if(isPersonnelMaterialMessage(question)) {
+      const receipt = await intakePersonnelMaterial(personnelDb, authorized, {title:question.split('\n')[0].slice(0,100)||'助研收到的材料',text:question});
+      return finish(privateJson(materialReceiptAnswer(receipt)));
+    }
+    const personnel = await answerPersonnelQuestion(personnelDb, authorized, question, history);
     if (personnel) {
       const current = await getAuthorizedUser({ readOnly: true });
       if (!current?.ndaCompleted || current.memberId !== authorized.memberId || current.accountUserId !== authorized.accountUserId ||
@@ -140,7 +150,9 @@ export async function POST(request: Request) {
     }
     const answer = await measureWaiting(timings, "answer", () => answerOaChatQuestion(question, ranked, history));
     return finish(privateJson(answer));
-  } catch {
+  } catch (error) {
+    const e=error as {status?:number;message?:string};
+    if(e.status)return finish(privateJson({error:e.message},{status:e.status}));
     return finish(privateJson({ error: "实验室知识问答暂不可用，请稍后重试。" }, { status: 500 }));
   }
 }

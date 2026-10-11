@@ -260,7 +260,7 @@ export class AiMemberStore {
 }
 
 export function createAiMembersHandler({ store, audience, origin, courses, courseVersion,
-  verifyAdmin = async () => null, verifyMember = null, publicAsk = null, directory = [
+  verifyAdmin = async () => null, verifyMember = null, publicAsk = null, privateConversationAsk = null, directory = [
     { id: 'ai-research', role: 'research_assistant', displayName: '助研 · AI' },
     { id: 'ai-tutor', role: 'teaching_assistant', displayName: '助教 · AI' },
     { id: 'ai-senior-01', role: 'senior_practice', displayName: '学长 · AI' },
@@ -352,7 +352,7 @@ export function createAiMembersHandler({ store, audience, origin, courses, cours
           return { id: entry.id, role: entry.role, displayName: row?.display_name || entry.displayName,
             status: row ? row.enabled ? 'registered' : 'disabled' : 'not_connected',
             canChat: Boolean(row?.enabled && publicAsk && verifyMember), canAskPublic: Boolean(row?.enabled && publicAsk),
-            scope: '公开课程和自身测试资料' };
+            scope: audience === 'oa' && entry.id === 'ai-research' && typeof privateConversationAsk === 'function' ? 'authenticated_oa_personnel' : '公开课程和自身测试资料' };
         }) });
       }
       const conversation = route.match(/^\/conversations\/([a-z][a-z0-9-]{2,63})\/messages$/u);
@@ -363,9 +363,10 @@ export function createAiMembersHandler({ store, audience, origin, courses, cours
         const agent = store.db.prepare('SELECT id,display_name,enabled FROM ai_members WHERE id=? AND enabled=1').get(conversation[1]);
         if (!entry || !agent) fail(404, '该 AI 成员尚未接入');
         const agentInfo = { id: agent.id, displayName: agent.display_name, role: entry.role };
+        const privateMode=audience==='oa'&&agent.id==='ai-research'&&typeof privateConversationAsk==='function';
         if (request.method === 'GET') {
           const rows = store.db.prepare('SELECT * FROM ai_conversation_turns WHERE agent_id=? AND audience=? AND requester_ref=? ORDER BY created_at DESC,id DESC LIMIT 200').all(agent.id, audience, requester.id).reverse();
-          return json({ agent: agentInfo, messages: rows.flatMap(turnMessages), notice: 'AI 回答仅使用公开问答能力，不代表审批或实际执行完成。' });
+          return json({ agent: agentInfo, messages: rows.flatMap(turnMessages), notice: privateMode?'助研按当前 OA 身份处理材料、查询本人或获准查看的已审核记录。收件回执与审批结果分别显示。':'AI 回答仅使用公开问答能力，不代表审批或实际执行完成。' });
         }
         if (typeof publicAsk !== 'function') fail(503, '公开问答尚未接入');
         store.rate(`conversation:${audience}:${requester.id}`, 20, 60 * 1000);
@@ -381,7 +382,7 @@ export function createAiMembersHandler({ store, audience, origin, courses, cours
           const turnId = id();
           store.db.prepare("INSERT INTO ai_conversation_turns(id,agent_id,audience,requester_ref,question,state,created_at,request_key,request_hash) VALUES(?,?,?,?,?,'running',?,?,?)")
             .run(turnId, agent.id, audience, requester.id, message, store.now(), input.idempotencyKey, requestHash);
-          store.audit(agent.id, audience, 'conversation.started', turnId, { requesterRef: requester.id, mode: 'public_only', role: entry.role });
+          store.audit(agent.id, audience, 'conversation.started', turnId, { requesterRef: requester.id, mode: privateMode?'oa_assistant':'public_only', role: entry.role });
           return { row: store.db.prepare('SELECT * FROM ai_conversation_turns WHERE id=?').get(turnId), replay: false };
         });
         const streaming = wantsEventStream(request);
@@ -404,18 +405,23 @@ export function createAiMembersHandler({ store, audience, origin, courses, cours
             }
             signal.throwIfAborted();
           };
-          const result = await runPublicAsk(message, { agentId: agent.id, questionId: reserved.row.id, signal,
+          const context = { agentId: agent.id, questionId: reserved.row.id, signal,
             onEvent: onEvent ? async event => {
               await verifyCurrentViewer();
               onEvent(event);
             } : undefined,
             persona: { role: entry.role, displayName: agent.display_name, actorType: 'ai_member' },
-            history: historyRows.flatMap(row => [{ role: 'user', content: row.question }, { role: 'assistant', content: row.answer.slice(0, 4000) }]) });
+            history: historyRows.flatMap(row => [{ role: 'user', content: row.question }, { role: 'assistant', content: row.answer.slice(0, 4000) }]) };
+          // Only the OA research role can call the explicitly wired, authenticated
+          // OA handler. No request/cookie is ever given to the public model path.
+          await verifyCurrentViewer(true);
+          const result = privateMode?await privateConversationAsk(request,message,context):await runPublicAsk(message,context);
+          if(!result||typeof result.answer!=='string'||!result.answer.trim()||result.answer.length>60000)fail(502,'未取得完整助研回执');
           signal.throwIfAborted();
           if (onEvent) await verifyCurrentViewer(true);
           store.atomic(() => {
             store.db.prepare("UPDATE ai_conversation_turns SET state='succeeded',answer=?,finished_at=? WHERE id=? AND state='running'").run(result.answer, store.now(), reserved.row.id);
-            store.audit(agent.id, audience, 'conversation.finished', reserved.row.id, { requesterRef: requester.id, mode: 'public_only', answerSha256: hash(result.answer) });
+            store.audit(agent.id, audience, 'conversation.finished', reserved.row.id, { requesterRef: requester.id, mode: privateMode?'oa_assistant':'public_only', answerSha256: hash(result.answer) });
           });
           if ((await memberIdentity(request))?.id !== requester.id) fail(401, '当前会话已失效');
           if (!store.db.prepare('SELECT id FROM ai_members WHERE id=? AND enabled=1').get(agent.id)) fail(403, 'AI 成员已停用；在途结果已保留供负责人核验');

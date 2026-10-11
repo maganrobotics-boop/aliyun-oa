@@ -1,0 +1,35 @@
+{
+  "integrationTests": 26,
+  "materialRegressionTests": 58,
+  "loginRegressionTests": 53,
+  "oaTypecheck": true,
+  "oaProductionBuild": true,
+  "serviceUserReadableAssets": 111,
+  "nativeHttp": {
+    "environment": "isolated databases, actual production candidate HTTP handlers; synthetic authentication fixture; real ROS2 runner",
+    "student": "student@project-release-qa.invalid",
+    "teacher": "teacher@project-release-qa.invalid",
+    "checks": [
+      "Course selection creates native OA pending item with name/student number and opens only the selected project.",
+      "Lab application is rejected before a real final-challenge pass.",
+      "Synthetic student completed actual ROS2 turtlesim final challenge with measured motion evidence.",
+      "Actual OA reply HTTP route invokes native approval, rejects unauthorized callers, and delivers signed permissions.",
+      "Reply visible to the student, granted chapter open, native immutable approval archived, and retry remains idempotent."
+    ],
+    "courseApplicationId": "439f7df2-e9c7-4346-ac99-f8242b4ad9dd",
+    "rosRunId": "d5dfd3dc-b5e2-4e03-aa89-3c1a72793b1e",
+    "labApplicationId": "3ead6e77-8517-4ea7-9a0f-7b1b301acde5",
+    "completedAt": "2026-10-11T10:00:24.645Z",
+    "result": "passed"
+  },
+  "parity": {
+    "unchanged": 1273,
+    "changed": [
+      "lib/project-application-store.mjs"
+    ],
+    "missing": []
+  },
+  "productionSyntheticApplication": false,
+  "productionLoginProviderRoundTrip": "not performed; existing provider regression and enabled flags checked at release",
+  "doubleSelectionDate": "待公布"
+}

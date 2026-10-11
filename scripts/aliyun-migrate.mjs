@@ -68,7 +68,7 @@ if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='p
   for (const table of ["expense_events", "expense_ledger_meta", "ai_workbench_tasks", "knowledge_items", "knowledge_revisions", "knowledge_revision_parts", "knowledge_events", "migration_control"]) {
     if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`Personnel weekly prerequisite missing: ${table}`);
   }
-  for (const name of ["personnel-auto-weekly-20261010.sql", "personnel-knowledge-weekly-20261010.sql"]) {
+  for (const name of ["personnel-auto-weekly-20261010.sql", "personnel-knowledge-weekly-20261010.sql", "personnel-material-intake-20261011.sql"]) {
     const sql = await readFile(path.join(projectRoot, "migrations", name), "utf8");
     const digest = createHash("sha256").update(sql).digest("hex");
     const old = hashes.get(name);

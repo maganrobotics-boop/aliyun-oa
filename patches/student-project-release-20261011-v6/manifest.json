@@ -1,0 +1,10 @@
+{
+  "baseline": "/opt/omindos-deploy/releases/oa-personnel-materials-20261011-v1",
+  "files": [
+    {
+      "path": "lib/project-application-store.mjs",
+      "before": "ba0df67636529850360f6ef0ef01e60fece56713b90336d750329f5e999afcac",
+      "after": "ba696dbbc8ed06bd3ea4c8a2dde6731bd19706ac6523579bcd80351b4657c3d0"
+    }
+  ]
+}

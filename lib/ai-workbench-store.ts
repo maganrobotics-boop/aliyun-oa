@@ -1,5 +1,6 @@
 import { validTaskInput, validTaskResult } from './ai-workbench-core.mjs';
 import { prepareTaskArtifacts } from './ai-workbench-artifacts.mjs';
+import { prepareTaskMaterial, taskMaterialLinkStatement } from './personnel-material-store.mjs';
 
 export type TaskActor = { memberId: string; accountUserId: string; memberMutationRevision: string };
 export type TaskInput = { kind: string; title: string; instruction: string; material: string };
@@ -17,15 +18,25 @@ const actorArgs = (a: TaskActor) => [a.memberId, a.accountUserId, a.memberMutati
 
 export async function createTask(db: D1Database, actor: TaskActor, input: TaskInput, originKey: string) {
   if (!validTaskInput(input) || !/^oa:[A-Za-z0-9_-]{8,176}$/u.test(originKey)) throw new Error('TASK_INVALID_INPUT');
+  const old = await db.prepare(`SELECT * FROM ai_workbench_tasks WHERE origin='oa' AND member_id=? AND account_user_id=? AND origin_key=? AND ${taskActorGuard}`).bind(actor.memberId, actor.accountUserId, originKey, ...actorArgs(actor)).first<TaskRow>();
+  if (old) {
+    if (old.kind !== input.kind || old.instruction !== input.instruction.trim() || old.material !== input.material || old.title !== input.title.trim()) throw new Error('TASK_IDEMPOTENCY_CONFLICT');
+    // Completed historical tasks keep their original workflow. Retry does not backfill.
+    return old;
+  }
+  const receipt = await prepareTaskMaterial(db, actor, input);
   const now = Date.now();
-  const row = await db.prepare(`INSERT INTO ai_workbench_tasks (id,member_id,account_user_id,member_revision,kind,title,instruction,material,origin,origin_key,created_at,updated_at)
+  const insert = db.prepare(`INSERT INTO ai_workbench_tasks (id,member_id,account_user_id,member_revision,kind,title,instruction,material,origin,origin_key,created_at,updated_at)
     SELECT ?,?,?,?,?,?,?,?,'oa',?,?,? WHERE ${taskActorGuard}
       AND (SELECT COUNT(*) FROM ai_workbench_tasks WHERE member_id=? AND created_at>?) < 100
       AND (SELECT COUNT(*) FROM ai_workbench_tasks WHERE member_id=? AND status IN ('queued','running')) < 5
     ON CONFLICT(member_id,account_user_id,origin_key) DO NOTHING RETURNING *`)
     .bind(crypto.randomUUID(), actor.memberId, actor.accountUserId, actor.memberMutationRevision, input.kind, input.title.trim(), input.instruction.trim(), input.material, originKey, now, now,
-      ...actorArgs(actor), actor.memberId, now - 86400000, actor.memberId).first<TaskRow>();
-  if (row) return row;
+      ...actorArgs(actor), actor.memberId, now - 86400000, actor.memberId);
+  // The task and its source link become visible together. A queue worker cannot
+  // finish the task between those writes and create a duplicate personal record.
+  if (receipt) await db.batch([insert, taskMaterialLinkStatement(db, actor, originKey, receipt.id)]);
+  else { const row = await insert.first<TaskRow>(); if (row) return row; }
   const existing = await db.prepare(`SELECT * FROM ai_workbench_tasks WHERE origin='oa' AND member_id=? AND account_user_id=? AND origin_key=? AND ${taskActorGuard}`).bind(actor.memberId, actor.accountUserId, originKey, ...actorArgs(actor)).first<TaskRow>();
   if (!existing) throw new Error('TASK_CREATE_LIMIT_OR_AUTH');
   if (existing.kind !== input.kind || existing.instruction !== input.instruction.trim() || existing.material !== input.material || existing.title !== input.title.trim()) throw new Error('TASK_IDEMPOTENCY_CONFLICT');
