@@ -10,7 +10,7 @@ import { isMigrationWriteFrozen } from "../../../../../lib/migration-freeze";
 import { OAUTH_SESSION_COOKIE, OAUTH_SESSION_MAX_AGE_SECONDS } from "../../../../../lib/oauth-session";
 import { QR_DESKTOP_COOKIE, QR_PHONE_COOKIE, QR_LOGIN_MAX_AGE_SECONDS, qrDesktopLabel, qrLoginOrigin, sameOriginQrPost, validQrNonce, type QrProvider } from "../../../../../lib/qr-login";
 import { generateQrSvg } from "../../../../../lib/qr-svg";
-import { buildWecomAuthorizeUrl, exchangeWecomCode, getWecomOAuthConfig, isWecomLoginEnabled } from "../../../../../lib/wecom-oauth";
+import { buildWecomAuthorizeUrl, exchangeWecomCode, getWecomOAuthConfig, isWecomLoginEnabled, wecomOAuthFailureReason } from "../../../../../lib/wecom-oauth";
 import { consumeWriteRateLimit } from "../../../../../lib/write-rate-limit";
 import { getAuthorizedUser, type AuthorizedUser } from "../../../_lib/auth";
 
@@ -158,8 +158,8 @@ export async function qrCallback(request: Request, provider: QrProvider) { retur
       const identity = await exchangeWecomCode(getWecomOAuthConfig(), code);
       subject = identity.providerSubject; login = identity.userId; displayName = identity.displayName;
     }
-  } catch {
-    await denyAttempt(db, attempt.stateHash, "verification-failed"); return mobileRedirect(challenge.id);
+  } catch (error) {
+    await denyAttempt(db, attempt.stateHash, provider === "wecom" ? wecomOAuthFailureReason(error) : "verification-failed"); return mobileRedirect(challenge.id);
   }
   const [identity] = await db.select().from(authIdentities).where(and(eq(authIdentities.provider, provider), eq(authIdentities.providerSubject, subject))).limit(1);
   let memberId: string | null = null;
@@ -332,3 +332,4 @@ export async function cancelQrLogin(request: Request) { return guarded(async () 
     eq(qrLoginChallenges.id, context.challenge.id), ne(qrLoginChallenges.status, "consumed")));
   return json({ ok: true });
 }); }
+

@@ -160,6 +160,7 @@ const vite = await createServer({
       `;
       if (id === "\0unified-qr-test-wecom") return `
         export const WECOM_PROVIDER = "wecom";
+        export function wecomOAuthFailureReason() { return "wecom-code-exchange-50001"; }
         export function isWecomLoginEnabled() { return ${state}.wecomEnabled; }
         export function getWecomOAuthConfig() {
           if (!isWecomLoginEnabled()) throw new Error("WeCom login is not configured");
@@ -524,6 +525,19 @@ test("unbound WeCom identity cannot merge by name or prevent a valid Feishu phon
   assert.equal(count("members"), 2);
 });
 
+test("failed WeCom verification records a safe diagnostic and leaves login unapproved", async () => {
+  globalThis[stateKey].exchangeError = true;
+  const pc = browser();
+  const phone = browser();
+  const data = await start(pc);
+  const attempt = await scan(phone, data.id, "wecom");
+  await callback(phone, "wecom", attempt.state);
+  assert.equal(challengeRow(data.id).status, "pending");
+  assert.equal(sqlite.prepare("SELECT failure_reason FROM qr_oauth_attempts WHERE challenge_id=?").get(data.id).failure_reason, "wecom-code-exchange-50001");
+  assert.equal((await confirm(phone, data.id)).status, 409);
+  assert.equal(count("oauth_sessions"), 0);
+});
+
 test("a foreign Feishu tenant and a revoked provider identity never reach phone confirmation", async () => {
   globalThis[stateKey].feishuIdentity.tenantKey = "tenant_other_company";
   const pc = browser();
@@ -693,3 +707,4 @@ test("provider disablement, rate limiting and malformed requests fail closed", a
   assert.equal((await invoke(service.scanQrLogin, phone, "/api/auth/qr/scan", { method: "POST", data: { id: "short", provider: "feishu" } })).status, 400);
   assert.equal(count("oauth_sessions"), 0);
 });
+
