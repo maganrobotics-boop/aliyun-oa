@@ -1,0 +1,36 @@
+name: Check student project application bridge
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/project-*'
+      - 'app/api/**/project-applications/**'
+      - 'tests/student-project-release.test.mjs'
+      - 'patches/student-project-release-20261011-v6/**'
+      - '.github/workflows/check-student-project-release.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: maganrobotics-boop/aliyun-chat
+          ref: 5b0d2059d9ef9ea8ca55957d163abc95eaca1d32
+          path: .student-project-chat
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - name: Verify identity, quota, gate, native revisions and permissions
+        env:
+          PROJECT_APPLICATION_CHAT_ROOT: ${{ github.workspace }}/.student-project-chat
+        run: node --test tests/student-project-release.test.mjs

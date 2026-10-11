@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "sourceRelease": "oa-personnel-layout-20261010-v2",
+  "edits": [
+    {
+      "path": "app/page.tsx",
+      "beforeSha256": "50801aae05c5c6a36a3c896173e7591840ced961af4a49b7bd53dd19810bc77c",
+      "afterSha256": "491e42a17d7938d0e2b9360dd936ffc5d7413ad6e0f34ef3d0448f507aa8b7b2",
+      "edits": [
+        {
+          "start": 1,
+          "end": 1,
+          "lines": [
+            "import { ProjectApplicationDetails } from '../components/project-application-details';\n",
+            "import '../components/project-application-details.css';\n"
+          ]
+        },
+        {
+          "start": 2079,
+          "end": 2079,
+          "lines": [
+            "        <ProjectApplicationDetails id={approval.id} payload={approval.payload} status={approval.status} currentEmail={currentEmail} onChanged={onRetry} />\n"
+          ]
+        }
+      ]
+    }
+  ],
+  "newFiles": [
+    "lib/project-application.mjs",
+    "lib/project-application-store.mjs",
+    "lib/project-application-store.d.mts",
+    "lib/project-application-replies.mjs",
+    "lib/project-application-replies.d.mts",
+    "components/project-application-details.tsx",
+    "components/project-application-details.css",
+    "app/api/internal/project-applications/route.ts",
+    "app/api/project-applications/[id]/files/[fileId]/route.ts",
+    "app/api/project-applications/[id]/reply/route.ts"
+  ]
+}
