@@ -43,7 +43,8 @@ function withServerTiming(response: Response, timings: RequestTimings, totalStar
 }
 function normalizedQuestion(value: unknown): string | null {
   if (typeof value !== "string" || !isWellFormedUnicode(value)) return null;
-  const question = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  // Keep pasted material's person/category headings on separate lines.
+  const question = value.normalize("NFKC").replace(/\r\n?/gu, "\n").replace(/[^\S\n]+/gu, " ").trim();
   return question.length >= 2 && question.length <= MAX_QUESTION_LENGTH ? question : null;
 }
 function parseHistory(value: unknown): OaChatHistory | null {
