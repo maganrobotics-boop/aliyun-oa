@@ -14,7 +14,7 @@ export type AiMemberSummary = {
   canChat: boolean; currentTask?: string;
 };
 const profiles: Array<{ role: AiRoleKey; name: string; summary: string }> = [
-  { role: 'research', name: '助研', summary: '协助整理公开资料与自身测试材料，提供预检建议。' },
+  { role: 'research', name: '助研', summary: '整理采购账单、工作与成果，提交本人确认，查询权限范围内已审核的记录。' },
   { role: 'ta', name: '助教', summary: '讲解课程、回答问题，核对代码与实验依据。' },
   { role: 'senior', name: '学长', summary: '独立完成学习任务，记录真实过程与成果。' },
   { role: 'sister', name: '学姐', summary: '独立复测学习与项目流程，反馈使用体验。' },
@@ -22,6 +22,7 @@ const profiles: Array<{ role: AiRoleKey; name: string; summary: string }> = [
 const statusLabel = { active: '已接入', registered: '已注册', paused: '已停用', pending: '待接入' };
 const scopeDescription = (scope?: string) => {
   if (!scope) return '尚未配置';
+  if (scope === 'authenticated_oa_personnel') return '按当前 OA 登录人的权限收件、送本人确认并查询人员记录';
   if (scope === 'public_courses_and_own_test_materials' || scope === '公开课程和自身测试资料') return '公开课程与本账号自己的测试资料';
   return '范围说明待确认，以账号实际授权为准';
 };
@@ -141,3 +142,4 @@ export function OaResearchWorkspace() {
  if (workspace.error || !member || !available(member)) return <div role="alert"><p>{workspace.error || '助研暂不可用，请稍后重试。'}</p><button type="button" onClick={workspace.reload}>重试</button></div>;
  return <InteractionContent key={member.id} member={member} mode="chat" inline />;
 }
+

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { AiMemberStore, createAiMembersHandler, PREFIX } from './ai-members.mjs';
+import { createOaResearchConversation } from './oa-research.mjs';
 
 const MAX_REQUEST = 384 * 1024;
 const AI_UA = 'OriginMind-AI-Member/1.0';
@@ -242,7 +243,7 @@ export function createIntegration({ audience, databasePath, origin, courses, cou
     return publicAnswer(response, options);
   };
   return { store, handle: createAiMembersHandler({ store, audience, origin, courses, courseVersion,
-    verifyMember, verifyAdmin, publicAsk }) };
+    verifyMember, verifyAdmin, publicAsk, privateConversationAsk:audience==='oa'?createOaResearchConversation({port,fetchImpl}):null }) };
 }
 
 export function isAiMemberPath(target) {

@@ -10,6 +10,7 @@ import { readChatAttachments, type ChatAttachmentBundle } from '@/lib/oa-chat-at
 import { OaFilePicker, OaSourceArchive, OaSourceImages } from './oa-file-controls';
 import { OaDocumentEditor } from './oa-document-editor';
 import { AdminMeetingMinutesLink } from './admin-meeting-minutes';
+import { PersonnelMaterialReceipt } from './personnel-material-receipt';
 
 type ImportedEntry = { type: 'import'; id: string; order: number; source: ChatDocumentSource; bundle?: ChatAttachmentBundle };
 type TaskEntry = { type: 'task'; id: string; order: number; requestId?: string; plan?: ChatDocumentPlan; task?: ChatDocumentTask; problem?: string };
@@ -203,7 +204,7 @@ function DocumentBody({ text }: { text: string }) {
   return <div ref={host} className="oa-rich-answer oa-document-body" />;
 }
 export function OaChatDocumentEvent({ entry, documents }: { entry: ChatDocumentEntry; documents: Documents }) {
-  if (entry.type === 'import') return <article className="oa-import-card" aria-label={`已导入 ${entry.source.name}`}><header><FileText size={20} /><strong>{entry.source.name}</strong><span>{entry.source.text.length.toLocaleString()} 字</span></header><TextPreview text={entry.source.text} />{entry.bundle && <OaSourceImages bundle={entry.bundle} />}<footer><small>临时材料，不自动入库；关闭此页会释放未提交的原文件。以“会议纪要”任务发送后，管理员可查看文字材料和成果。单次 AI 处理最多 20,000 字，超出不截断，完整资料仍可归档送审。</small><button type="button" className="oa-document-text-button" disabled={documents.busy} onClick={() => documents.useSource(entry.source)}>使用这份材料</button></footer>{entry.bundle && <OaSourceArchive bundle={entry.bundle} />}</article>;
+  if (entry.type === 'import') return <article className="oa-import-card" aria-label={`已导入 ${entry.source.name}`}><header><FileText size={20} /><strong>{entry.source.name}</strong><span>{entry.source.text.length.toLocaleString()} 字</span></header><TextPreview text={entry.source.text} /><PersonnelMaterialReceipt title={entry.source.name} text={entry.source.text} />{entry.bundle && <OaSourceImages bundle={entry.bundle} />}<footer><small>材料按采购账单、从事的工作、取得的成果自动提交本人确认待办；本人确认并经指定审核人通过后进入个人主页。原文件可继续归档保存。单次 AI 文档处理最多 20,000 字，超出不截断。</small><button type="button" className="oa-document-text-button" disabled={documents.busy} onClick={() => documents.useSource(entry.source)}>使用这份材料</button></footer>{entry.bundle && <OaSourceArchive bundle={entry.bundle} />}</article>;
   const task = entry.task;
   const disabled = task ? documents.pending.some(key => key.endsWith(`:${task.id}`)) : documents.busy;
   return <div className="oa-chat-turn oa-document-turn">

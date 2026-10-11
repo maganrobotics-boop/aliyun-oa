@@ -7,6 +7,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { OaRichAnswer } from './knowledge/oa-rich-answer';
 import { aiMemberMessages as validMessages, readAiMemberEvents, type AiMemberChatMessage } from '@/lib/ai-member-stream-client.mjs';
 import type { AiMemberSummary } from './ai-member-directory';
+import { readChatAttachments } from '@/lib/oa-chat-attachments.mjs';
+import { OaFilePicker } from './knowledge/oa-file-controls';
+import { PersonnelMaterialReceipt } from './knowledge/personnel-material-receipt';
 
 type ChatMessage = AiMemberChatMessage;
 type AuditEvent = { seq: number; audience: string; event: string; targetId?: string; details?: unknown; createdAt: string | number };
@@ -40,6 +43,9 @@ export function InteractionContent({ member, mode, inline = false }: { member: A
   const [unconfirmed, setUnconfirmed] = useState(false);
   const [nextAfter, setNextAfter] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [materials, setMaterials] = useState<Array<{ id: string; title: string; text: string }>>([]);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState('');
   const requestSequence = useRef(0);
   const currentTurn = useRef<string | null>(null);
   const alive = useRef(false);
@@ -51,6 +57,7 @@ export function InteractionContent({ member, mode, inline = false }: { member: A
   const stickToEnd = useRef(true);
   const inputId = useId();
   const endpoint = `/api/ai-members/conversations/${encodeURIComponent(member.id)}/messages`;
+  const acceptsMaterials = mode === 'chat' && member.id === 'ai-research' && member.role === 'research';
   useEffect(() => {
     alive.current = true;
     const activeControllers = controllers.current;
@@ -80,6 +87,22 @@ export function InteractionContent({ member, mode, inline = false }: { member: A
   }, [endpoint, member.id, mode]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (stickToEnd.current) messageEnd.current?.scrollIntoView({ block: 'nearest' }); }, [messages, partial, status]);
+
+  const importMaterials = async (files: File[], folder: boolean) => {
+    if (!acceptsMaterials || importing || sending || !files.length) return;
+    const controller = new AbortController(); controllers.current.add(controller);
+    setImporting(true); setError('');
+    try {
+      const bundle = await readChatAttachments(files, { folder, signal: controller.signal,
+        onProgress: progress => { if (alive.current) setImportProgress(progress); } });
+      if (alive.current) setMaterials(previous => [...previous, { id: bundle.id, title: bundle.name, text: bundle.text }]);
+    } catch (cause) {
+      if (alive.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : '材料解析未完成，请重试。');
+    } finally {
+      controllers.current.delete(controller);
+      if (alive.current) { setImporting(false); setImportProgress(''); }
+    }
+  };
 
   const send = async (event: FormEvent, retryMessage?: string) => {
     event.preventDefault(); const message = (retryMessage ?? body).trim();
@@ -128,7 +151,9 @@ export function InteractionContent({ member, mode, inline = false }: { member: A
       {mode === 'chat' ? <>{messages.map(message => <article className={`oa-ai-message ${message.role}`} key={message.id}><small>{message.role === 'user' ? '我' : `${member.displayName} · AI`} · {time(message.createdAt)}</small>{message.role === 'assistant' ? <RichAnswer answer={message.content} /> : <p>{message.content}</p>}{message.state && !['succeeded', 'completed'].includes(message.state) && <small>{messageState[message.state] || '状态待核对'}</small>}{message.error && <p className="oa-ai-message-error">{message.error}</p>}{message.role === 'user' && message.state === 'failed' && message.retryable && <button type="button" className="oa-ai-retry" disabled={sending || loading} onClick={event => void send(event, message.content)}>重新生成</button>}</article>)}{!messages.length && !sending && <p className="project-empty">{loading ? '正在读取会话…' : '还没有消息，可以从一个具体问题开始。'}</p>}{partial && <article className={`oa-ai-message assistant ${unconfirmed ? 'unconfirmed' : 'streaming'}`}><small>{member.displayName} · AI · {unconfirmed ? '未确认片段' : '正在回答'}</small><RichAnswer answer={partial} /></article>}{status && <p className="oa-ai-stream-status" role="status" aria-live="polite">{status}</p>}</> : events.length ? <ol className="oa-ai-audit-list">{events.map(event => <li key={event.seq}><header><strong>{eventLabels[event.event] || event.event}</strong><time>{time(event.createdAt)}</time></header><small>{event.audience} · 记录 {event.seq}{event.targetId ? ` · ${event.targetId}` : ''}</small>{event.details !== undefined && <details><summary>查看记录内容</summary><pre>{typeof event.details === 'string' ? event.details : JSON.stringify(event.details, null, 2)}</pre></details>}</li>)}</ol> : <p className="project-empty">{loading ? '正在读取操作记录…' : '暂无操作事件。'}</p>}
       <div ref={messageEnd} />{mode === 'audit' && hasMore && <button type="button" disabled={loading} onClick={() => void load(nextAfter)}>{loading ? '读取中…' : '加载更多记录'}</button>}
     </div>
-    {mode === 'chat' && <form className="oa-ai-message-composer" onSubmit={send}><label className="sr-only" htmlFor={inputId}>发送给 {member.displayName} 的问题</label><textarea id={inputId} rows={3} maxLength={2000} value={body} disabled={sending} onChange={event => setBody(event.target.value)} placeholder={`向${member.displayName}描述问题和希望获得的帮助…`} />{sending ? <button key="stop" type="button" className="oa-ai-stop" onClick={event => { event.preventDefault(); sendController.current?.abort(); }}><Square />停止</button> : <button key="send" type="submit" disabled={loading || !body.trim()}><Send />发送</button>}</form>}
+    {acceptsMaterials && <div aria-label="已发给助研的材料">{importProgress && <p role="status">{importProgress}</p>}{materials.map(material => <article key={material.id}><strong>{material.title}</strong><PersonnelMaterialReceipt title={material.title} text={material.text} /></article>)}</div>}
+    {mode === 'chat' && <form className="oa-ai-message-composer" onSubmit={send}>{acceptsMaterials && <OaFilePicker disabled={loading || sending || importing} onFiles={(files, folder) => void importMaterials(files, folder)} />}<label className="sr-only" htmlFor={inputId}>发送给 {member.displayName} 的问题</label><textarea id={inputId} rows={3} maxLength={2000} value={body} disabled={sending} onChange={event => setBody(event.target.value)} placeholder={acceptsMaterials ? '发送工作、成果或采购材料，或查询已审核的个人记录…' : `向${member.displayName}描述问题和希望获得的帮助…`} />{sending ? <button key="stop" type="button" className="oa-ai-stop" onClick={event => { event.preventDefault(); sendController.current?.abort(); }}><Square />停止</button> : <button key="send" type="submit" disabled={loading || importing || !body.trim()}><Send />发送</button>}</form>}
   </>;
   return inline ? <section className="oa-ai-interaction oa-research-inline" aria-label="助研聊天">{content}</section> : <DialogContent className="oa-ai-interaction">{content}</DialogContent>;
 }
+
