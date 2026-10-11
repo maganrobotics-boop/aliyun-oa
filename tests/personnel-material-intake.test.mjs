@@ -47,7 +47,7 @@ test('ambiguous names, referenced mentors, other person headings, queries and hy
  const same=[...roster,{...roster[0],id:'other',accountUserId:'other'}];assert.equal(extractPersonnelMaterial(text,same).entries.some(e=>e.memberId==='a'),false);
  const r=extractPersonnelMaterial('作者：陈绿平\n完成测试。\n## 林子昕\n工作：开发接口，请陈绿平指导。\n## 未登记人员\n完成秘密任务。',roster);
  assert.deepEqual(r.entries.map(e=>e.memberId),['b']);assert.doesNotMatch(materialContent(r.entries[0]),/秘密/);
- for(const s of ['陈绿平做了什么工作？','请查一下陈绿平取得的成果','假设陈绿平完成了实验，整理成周报'])assert.equal(isPersonnelMaterialMessage(s),false);
+ for(const s of ['陈绿平做了什么工作？','请查一下陈绿平取得的成果','陈绿平取得的成果','陈绿平的采购账单','陈绿平从事的工作。','假设陈绿平完成了实验，整理成周报'])assert.equal(isPersonnelMaterialMessage(s),false);
  assert.equal(isPersonnelMaterialMessage(text),true);
 });
 test('default intake stores independent self-confirmation drafts, scoped source evidence and a real receipt, with no approval/payment',async()=>{
@@ -80,6 +80,17 @@ test('pasting an uploaded material preserves full-width punctuation, spacing and
   assert.equal(f.sqlite.prepare('SELECT count(*) n FROM personnel_material_intakes').get().n,1);
   assert.equal(f.sqlite.prepare('SELECT source_text FROM personnel_material_intakes').get().source_text,raw);
   assert.equal(f.sqlite.prepare('SELECT count(*) n FROM personnel_weekly_entries').get().n,2);
+ }finally{delete globalThis.__aiWorkbenchTest;f.sqlite.close();}
+});
+test('asking for a named person category reads records without creating another intake',async()=>{
+ const f=fixture();try{
+  await intakePersonnelMaterial(f.db,f.actor('sender'),{title:'原始附件',text});
+  globalThis.__aiWorkbenchTest={env:{DB:f.db},actor:f.actor('sender')};
+  for(const category of ['采购账单','从事的工作','取得的成果']) {
+   const response=await askApi.POST(new Request('https://oa.test/api/lab-ai/ask',{method:'POST',headers:{origin:'https://oa.test','content-type':'application/json'},body:JSON.stringify({question:'陈绿平的'+category,history:[]})}));
+   assert.equal(response.status,200);assert.match((await response.json()).answer,/陈绿平的个人情况/);
+  }
+  assert.equal(f.sqlite.prepare('SELECT count(*) n FROM personnel_material_intakes').get().n,1);
  }finally{delete globalThis.__aiWorkbenchTest;f.sqlite.close();}
 });
 test('an NDA revoked after parsing excludes that person; sender revocation, maintenance freeze and partial write failures cannot give false success',async()=>{
