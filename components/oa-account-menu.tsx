@@ -1,6 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { isWecomBrowser } from "../lib/wecom-app-entry";
 import { ArrowLeft, BookOpen, ChevronDown, HelpCircle, LogOut, Settings2, SlidersHorizontal, UserRound, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { OaAccountProfile } from "./oa-account-profile";
@@ -68,7 +69,7 @@ export function OaAccountMenu({ user, avatarDataUrl = "", roleLabel = "", onIden
     try {
       const response = await fetch("/api/session", { method: "DELETE", credentials: "same-origin", headers: { accept: "application/json" } });
       if (!response.ok) throw new Error("退出失败，请稍后重试。");
-      window.location.assign(user?.authProvider === "chatgpt" ? "/signout-with-chatgpt?return_to=%2F" : "/");
+      window.location.assign(user?.authProvider === "chatgpt" ? "/signout-with-chatgpt?return_to=%2F" : isWecomBrowser(navigator.userAgent) ? "/?wecom=signed-out" : "/");
     } catch (error) { setNotice(error instanceof Error ? error.message : "退出失败，请稍后重试。"); setLoggingOut(false); }
   };
   const items = [
@@ -116,6 +117,12 @@ export function OaAccountMenu({ user, avatarDataUrl = "", roleLabel = "", onIden
 
 export function OaLoginWorkspace({ user, loginContent, loading = false, children }: { user?: OaAccountUser | null; loginContent?: ReactNode; loading?: boolean; children?: ReactNode }) {
   const [openRequest, setOpenRequest] = useState(0);
+  const appEntryOpened = useRef(false);
+  useEffect(() => {
+    if (loading || user || !loginContent || children || appEntryOpened.current || !isWecomBrowser(navigator.userAgent)) return;
+    appEntryOpened.current = true;
+    setOpenRequest(value => value + 1);
+  }, [loading, user, loginContent, children]);
   return <div className="oa-login-workspace">
     <header className="oa-login-header"><div className="oa-login-header-brand"><strong>机器人自主移动与操作实验室</strong><span>OriginMind × ARTS Robotics · 联合研发 OA</span></div><OaAccountMenu key={loading ? "loading" : user?.email || "guest"} user={user} loginContent={loginContent} loading={loading} defaultOpen={Boolean(user && loginContent)} openRequest={openRequest} /></header>
     {children ? <main className="oa-access-content">{children}</main> : <main className="oa-login-welcome">

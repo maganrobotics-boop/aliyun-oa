@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { wecomAppEntry, wecomAppMessage } from "../lib/wecom-app-entry";
 import "./oa-qr-login.css";
 
 type Provider = "feishu" | "wecom";
@@ -37,6 +38,7 @@ export function OaQrLogin({ feishuEnabled, wecomEnabled, action = "login", onLin
   const [error, setError] = useState("");
   const [remaining, setRemaining] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
+  const [appLogin, setAppLogin] = useState<{ automatic: boolean; message: string; startUrl: string } | null>(null);
   const onLinkedRef = useRef(onLinked);
   const enabled = action === "link" ? wecomEnabled : feishuEnabled || wecomEnabled;
 
@@ -44,6 +46,19 @@ export function OaQrLogin({ feishuEnabled, wecomEnabled, action = "login", onLin
 
   useEffect(() => {
     if (!enabled) return;
+    const entry = wecomAppEntry(navigator.userAgent, window.location.search, wecomEnabled, action);
+    if (entry !== "qr") {
+      const target = new URL(window.location.href);
+      const result = target.searchParams.get("wecom");
+      target.searchParams.delete("wecom");
+      const startUrl = `/api/auth/wecom/start?return_to=${encodeURIComponent(target.pathname + target.search + target.hash)}`;
+      // Browser-only OAuth context is available after hydration.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAppLogin({ automatic: entry === "automatic", message: wecomAppMessage(result), startUrl });
+      if (entry === "automatic") window.location.replace(startUrl);
+      return;
+    }
+    setAppLogin(null);
     const controller = new AbortController();
     let active = true;
     let currentId = "";
@@ -179,6 +194,14 @@ export function OaQrLogin({ feishuEnabled, wecomEnabled, action = "login", onLin
   if (!enabled) {
     return <div className="oa-qr-login oa-qr-unavailable" role="status">{action === "link" ? "企业微信登录尚未配置，暂时无法绑定。请联系管理员完成配置。" : "此 OA 尚未配置扫码登录。请联系管理员完成飞书或企业微信配置。"}</div>;
   }
+
+  if (appLogin) return <section className="oa-qr-login" aria-label="企业微信免登录">
+    <p className="oa-qr-status" role="status">{appLogin.automatic ? "正在使用企业微信身份进入 OA…" : appLogin.message}</p>
+    <a className="oa-qr-device-login" href={appLogin.startUrl} target="_top">{appLogin.automatic ? "点击继续" : "使用企业微信登录"}</a>
+    {/* A document reload resets the browser-only OAuth entry and session state. */}
+    {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+    <a className="oa-qr-device-login" href="/?wecom=manual" target="_top">使用其他登录方式</a>
+  </section>;
 
   const providers: Provider[] = challenge?.providers ?? (action === "link" ? ["wecom"] : [feishuEnabled ? "feishu" : null, wecomEnabled ? "wecom" : null].filter((provider): provider is Provider => provider !== null));
   const providerText = providers.map(providerName).join("或");
