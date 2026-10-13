@@ -21,6 +21,46 @@ Cloud's `/v1/oa-activity` endpoint is read-only and requires the service key ove
 - Separate Cloud container: HEAD excluded; anonymous page and 3 heartbeats count once; authenticated account counted separately; cross-origin heartbeat and unauthenticated statistics denied.
 - OA candidate homepage 200 and unauthenticated statistics 401.
 - Production TLS bridge from Aliyun to Cloud returned the Cloud schema with private/no-store headers; unauthenticated access returned 401.
-- Browser visual testing was attempted but the local Chromium process could not start in the execution environment. No live OA administrator browser session was used.
+- At initial deployment, the local Chromium process could not start and no live OA administrator browser session was used. The final browser acceptance below supersedes that initial evidence limit.
 
 Production Cloud tracking began 2026-10-13 15:10 Beijing time. Isolated test data were not copied to production. The deployment preserves the previous OA release and original Cloud server for rollback.
+
+## Final administrator browser acceptance — 2026-10-13
+
+A real signed-in OA administrator session was verified in the desktop cloud browser after manual handoff. The live page is https://oa.omindos.cn/#future-stars (select **Cloud 上线统计**).
+
+The following browser flows passed: the 24-hour, 3-day and 7-day selectors; account/guest filters; visits sort; exact guest search and no-match empty state; tracking-start and no-history explanation; latest-seen display; current one-page disabled pagination; genuine Cloud guest visit and reload deduplication; statistics refresh; controlled 503 messaging and retry recovery; course statistics; competition awards list and empty registration form; honors list; read-only approval, knowledge-library and internal-chat entry loading.
+
+- Tracking metadata and the live page agree on 2026-10-13 15:10:03 Beijing time (epoch milliseconds 1791875403744). No visits precede that tracking start.
+- Snapshot at 16:35:43: all three Cloud windows showed 0 accounts and 8 guest browser identifiers. Every window only covers data accumulated since tracking began; this is not seven days of historical coverage.
+- The same genuine guest browser remained one visit after reload. Its last-seen display advanced from 16:25:42 to 16:26:21 while the list remained at 7 identifiers during that check. Later live snapshots reached 8 identifiers.
+- Course snapshot at 16:27:41 showed 7 / 16 / 21 learners for 24h / 3d / 7d, 3 learners with new progress and 5 new task submissions. Honors management returned 3 entries; the knowledge library loaded 320 records.
+- A temporary reverse-proxy 503 response matched only the unique acceptance search query and Cloud view. The production UI cleared its numbers to em dashes, displayed the unavailable message, and offered retry. After removal, retry returned live data. The original Nginx configuration was restored byte-for-byte at 16:22:37; a timed cleanup safeguard was also removed. This was fault injection, not an observed Cloud outage.
+- Current source passed 7 Python activity tests, 4 OA route/client tests, 30 existing WeCom/unified-QR tests, and service-user TypeScript checking. Existing production-build receipts and browser delivery were retained; this source archive does not require a new application release.
+
+### Explicit evidence limits
+
+A real ordinary-member browser session was not available: anonymous production reads were rejected with 401 and automated substituted non-admin actors returned 403, but a real non-admin session is **not accepted**. Real Cloud account deduplication / guest-to-account transition is **not accepted** because the observed live records were guests. True multi-page Cloud browsing is **not accepted** because there were fewer than 20 records; disabled one-page buttons and the existing 25-identity pagination test passed. Awards submissions, approval mutations, full AI inference and real-phone statistics layouts were outside the read-only browser regression coverage.
+
+The first mobile QR confirmations did not establish this browser's session. Manual handoff established a verified administrator session. The earlier session-synchronization cause was not established; no authentication bypass was used.
+
+## Production source reconciliation
+
+The deployed feature files matched the original PR head `f7c2256e7d7e6d2e70b01bd79b3755626a2c3a13`. A broader inventory of 358 tracked runtime source files found 350 matches and the following 8 pre-existing production differences. Archiving only the statistics patch would therefore leave main behind the running OA.
+
+The six AI presentation/factual-grounding changes were already deployed in `oa-ai-facts-20261012-v1` and recorded in the 2026-10-12 release verification. The two controlled WeCom-diagnostic source files exactly match the already-deployed PR #14 head `4f6a49f1ed7fca85f15e610ceb0a0d8817360af0`. The existing two QR/WeCom test files from that PR are reused. The original PR #14 draft and branch retain their own history.
+
+| Already-deployed file | Live Git blob SHA |
+| --- | --- |
+| app/api/auth/qr/_lib/service.ts | a0aa36ecd8cc49d4dd9b518d161849b41ca3bc14 |
+| app/guide/page.tsx | 0df785164e64be7606636b51cb24ae98862a2bb1 |
+| app/page.tsx | c6888bef5e5f8543fce1731c5d5d7b131a23244c |
+| components/ai-member-directory.tsx | f778e8269043502313d09f9e1b78d97846f02e34 |
+| components/knowledge/knowledge-view.tsx | 0bd41451713443990d06d74a6c6c5adff96f00c9 |
+| components/knowledge/oa-chat-panel.tsx | 97b6d6539d8980f07f4a4e6afdada2f21c8a7b2d |
+| lib/lab-ai-client.ts | 3ad02f2529a5fa36e5a8149faab37dfeebcc79fc |
+| lib/wecom-oauth.ts | 977ff38ed01eaa0ed808aa7f10b25505dc3cef7c |
+
+The archive preserves those bytes, authentication/membership guards and the deployed statistics implementation. Production stays on `oa-cloud-activity-20261013-v1`; the previous `oa-ai-facts-20261012-v1` and original Cloud server remain rollback targets. A new source commit is metadata/code archival, not another production deployment. Merge-to-production workflows are manual.
+
+No service keys, cookies, authorization codes, business databases, uploaded documents or synthetic activity history are committed. The checked runtime-file inventory is the scope of source equality; deployment configuration and untracked runtime integrations retain their existing separate release provenance.
