@@ -64,3 +64,9 @@ The six AI presentation/factual-grounding changes were already deployed in `oa-a
 The archive preserves those bytes, authentication/membership guards and the deployed statistics implementation. Production stays on `oa-cloud-activity-20261013-v1`; the previous `oa-ai-facts-20261012-v1` and original Cloud server remain rollback targets. A new source commit is metadata/code archival, not another production deployment. Merge-to-production workflows are manual.
 
 No service keys, cookies, authorization codes, business databases, uploaded documents or synthetic activity history are committed. The checked runtime-file inventory is the scope of source equality; deployment configuration and untracked runtime integrations retain their existing separate release provenance.
+
+## CI status and remaining repository maintenance
+
+The attachment-lifecycle workflow passed. The broad material-intake workflow initially scanned detached historical TypeScript fragments under `patches/project-applications-20261011-v1/modules/` and failed their intentionally context-dependent relative imports. Application type checking now excludes `patches`; live production has no such detached archive fragments in its compilation tree.
+
+The existing OA Chat browser-parity workflow failed while waiting for the legacy `.collaboration-workspace` selector. The same failure is evidenced on PR #16's prior head `55492a052159b8e896802faecb8f5032b8e5a96c` (run 38186763782, 2026-10-12), as well as the original statistics head. This legacy Chat fixture suite is not accepted as passed by the administrator's statistics checks. Updating the fixture to the current collaboration entry/layout remains separate repository maintenance.
