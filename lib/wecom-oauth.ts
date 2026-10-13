@@ -78,7 +78,37 @@ export function buildWecomAuthorizeUrl(config: WecomOAuthConfig, state: string) 
   return url;
 }
 
-async function requestWecomJson(url: URL, errorMessage: string) {
+type WecomRequestStage = "token" | "code-exchange" | "member-access";
+
+class WecomRequestError extends Error {
+  constructor(message: string, readonly stage: WecomRequestStage, readonly apiCode?: number) {
+    super(message);
+    this.name = "WecomRequestError";
+  }
+}
+
+// Persist only a controlled stage and numeric API code, never an upstream
+// message, request URL, token, authorization code or member payload.
+export function wecomOAuthFailureReason(error: unknown): string {
+  if (error instanceof WecomRequestError) {
+    const code = error.apiCode;
+    return `wecom-${error.stage}-${typeof code === "number" && Number.isSafeInteger(code) && code > 0 && code <= 9_999_999 ? code : "failed"}`;
+  }
+  const reasons: Record<string, string> = {
+    "WeCom application token request failed": "wecom-token-failed",
+    "WeCom authorization code exchange failed": "wecom-code-exchange-failed",
+    "WeCom application member access denied": "wecom-member-access-failed",
+    "WeCom returned an invalid account identifier": "wecom-identity-invalid",
+    "WeCom returned an invalid enterprise identifier": "wecom-identity-invalid",
+    "WeCom external members cannot sign in to this OA": "wecom-external-member",
+    "WeCom authorization code is invalid": "wecom-code-invalid",
+    "WeCom login is not configured": "wecom-not-configured",
+  };
+  return error instanceof Error && Object.hasOwn(reasons, error.message)
+    ? reasons[error.message] : "wecom-verification-failed";
+}
+
+async function requestWecomJson(url: URL, errorMessage: string, stage: WecomRequestStage) {
   try {
     const response = await fetch(url, {
       headers: { accept: "application/json" },
@@ -90,12 +120,17 @@ async function requestWecomJson(url: URL, errorMessage: string) {
     const value: unknown = await response.json();
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(errorMessage);
     const payload = value as Record<string, unknown>;
-    if (payload.errcode !== 0) throw new Error(errorMessage);
+    if (payload.errcode !== 0) {
+      const apiCode = typeof payload.errcode === "number" && Number.isSafeInteger(payload.errcode)
+        && payload.errcode > 0 && payload.errcode <= 9_999_999 ? payload.errcode : undefined;
+      throw new WecomRequestError(errorMessage, stage, apiCode);
+    }
     return payload;
-  } catch {
+  } catch (error) {
     // Fetch URLs contain application secrets or tokens. Do not propagate
     // upstream errors/URLs/errmsg into route logs or browser responses.
-    throw new Error(errorMessage);
+    if (error instanceof WecomRequestError) throw error;
+    throw new WecomRequestError(errorMessage, stage);
   }
 }
 
@@ -104,14 +139,14 @@ export async function exchangeWecomCode(config: WecomOAuthConfig, code: string):
   const tokenUrl = new URL(WECOM_TOKEN_URL);
   tokenUrl.searchParams.set("corpid", config.corpId);
   tokenUrl.searchParams.set("corpsecret", config.corpSecret);
-  const token = await requestWecomJson(tokenUrl, "WeCom application token request failed");
+  const token = await requestWecomJson(tokenUrl, "WeCom application token request failed", "token");
   const accessToken = token.access_token;
   if (typeof accessToken !== "string" || !accessToken || accessToken.length > 4_096 || /[\u0000-\u0020\u007f]/u.test(accessToken) || typeof token.expires_in !== "number" || !Number.isInteger(token.expires_in) || token.expires_in <= 0) throw new Error("WeCom application token request failed");
 
   const userInfoUrl = new URL(WECOM_USER_INFO_URL);
   userInfoUrl.searchParams.set("access_token", accessToken);
   userInfoUrl.searchParams.set("code", code);
-  const userInfo = await requestWecomJson(userInfoUrl, "WeCom authorization code exchange failed");
+  const userInfo = await requestWecomJson(userInfoUrl, "WeCom authorization code exchange failed", "code-exchange");
   const userId = normalizeUserId(userInfo.userid);
   if (userInfo.external_userid) throw new Error("WeCom external members cannot sign in to this OA");
 
@@ -122,7 +157,7 @@ export async function exchangeWecomCode(config: WecomOAuthConfig, code: string):
   const memberUrl = new URL(WECOM_MEMBER_URL);
   memberUrl.searchParams.set("access_token", accessToken);
   memberUrl.searchParams.set("userid", userId);
-  const member = await requestWecomJson(memberUrl, "WeCom application member access denied");
+  const member = await requestWecomJson(memberUrl, "WeCom application member access denied", "member-access");
   if (normalizeUserId(member.userid) !== userId || member.status !== 1) throw new Error("WeCom application member access denied");
   const displayName = typeof member.name === "string" ? member.name.replace(/[\u0000-\u001f\u007f]/gu, "").trim().slice(0, 80) : "";
   return {
