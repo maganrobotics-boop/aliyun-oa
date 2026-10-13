@@ -190,6 +190,41 @@ test("WeCom exchange rejects malformed and failed API responses without exposing
   });
 });
 
+test("WeCom diagnostics retain only the failed stage and a bounded numeric API code", async () => {
+  for (const [responseKey, stage, apiCode] of [
+    ["token", "token", 40013],
+    ["identity", "code-exchange", 50001],
+    ["member", "member-access", 60011],
+  ]) {
+    mockExchange({ [responseKey]: { errcode: apiCode, errmsg: "https://private.example/?code=unit-test-code&secret=unit-test-app-secret", access_token: "unit-test-access-token" } });
+    await assert.rejects(oauth.exchangeWecomCode(oauth.getWecomOAuthConfig(), "unit-test-code"), (error) => {
+      assert.equal(oauth.wecomOAuthFailureReason(error), `wecom-${stage}-${apiCode}`);
+      assert.doesNotMatch(JSON.stringify(error), /private\.example|unit-test-(?:code|access-token|app-secret)/u);
+      return true;
+    });
+  }
+  for (const errcode of ["50001", -1, 50001.5, 10_000_000, "unit-test-app-secret", { code: 50001 }]) {
+    mockExchange({ identity: { errcode, errmsg: "unit-test-app-secret" } });
+    await assert.rejects(oauth.exchangeWecomCode(oauth.getWecomOAuthConfig(), "unit-test-code"), (error) => {
+      assert.equal(oauth.wecomOAuthFailureReason(error), "wecom-code-exchange-failed");
+      return true;
+    });
+  }
+  globalThis.fetch = async (input) => { throw new Error(`network failed for ${String(input)}`); };
+  await assert.rejects(oauth.exchangeWecomCode(oauth.getWecomOAuthConfig(), "unit-test-code"), (error) => {
+    assert.equal(oauth.wecomOAuthFailureReason(error), "wecom-token-failed");
+    return true;
+  });
+  mockExchange({ identity: { errcode: 0, userid: "foreigncorp/zhangsan" } });
+  await assert.rejects(oauth.exchangeWecomCode(oauth.getWecomOAuthConfig(), "unit-test-code"), (error) => {
+    assert.equal(oauth.wecomOAuthFailureReason(error), "wecom-identity-invalid");
+    return true;
+  });
+  for (const error of [new Error("unit-test-app-secret"), new Error("constructor"), { message: "WeCom application token request failed" }, null]) {
+    assert.equal(oauth.wecomOAuthFailureReason(error), "wecom-verification-failed");
+  }
+});
+
 test("WeCom rejects malformed and oversized codes before requesting an application token", async () => {
   let calls = 0;
   globalThis.fetch = async () => { calls += 1; throw new Error("Unexpected request"); };
