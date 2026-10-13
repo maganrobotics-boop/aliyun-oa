@@ -184,6 +184,8 @@ const vite = await createServer({
 });
 
 const service = await vite.ssrLoadModule("/app/api/auth/qr/_lib/service.ts");
+const appLogin = await vite.ssrLoadModule("/app/api/auth/wecom/_lib/app-login.ts");
+const appEntry = await vite.ssrLoadModule("/lib/wecom-app-entry.ts");
 const { QR_DESKTOP_COOKIE, QR_PHONE_COOKIE } = await vite.ssrLoadModule("/lib/qr-login.ts");
 const sessionCookie = "__Host-oa_oauth_session";
 
@@ -263,6 +265,118 @@ const challengeRow = (id) => sqlite.prepare("SELECT * FROM qr_login_challenges W
 const count = (table) => sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n;
 const sessionWrites = (client) => client.writes.filter((write) => write.name === sessionCookie && write.value && write.options?.maxAge !== 0);
 const fingerprint = (value) => createHash("sha256").update(value).digest("hex");
+
+async function startApp(client, path = "/?approval=request-123") {
+  const response = await invoke(appLogin.startWecomAppLogin, client, `/api/auth/wecom/start?return_to=${encodeURIComponent(path)}`, { headers: { "user-agent": "Mozilla/5.0 Android wxwork/4.1.0" } });
+  assert.equal(response.status, 303);
+  const url = new URL(response.headers.get("location"));
+  assert.equal(url.origin, "https://open.weixin.qq.com");
+  assert.equal(url.searchParams.get("redirect_uri"), origin + "/api/auth/wecom/callback");
+  return url.searchParams.get("state");
+}
+
+function finishApp(client, state, extra = "") {
+  return invoke(appLogin.finishWecomAppLogin, client, `/api/auth/wecom/callback?state=${state}&code=test-code${extra}`);
+}
+
+test("WeCom app login issues one seven-day session for the bound original member and preserves the destination", async () => {
+  const phone = browser();
+  const before = sqlite.prepare("SELECT * FROM members ORDER BY id").all();
+  const state = await startApp(phone);
+  const response = await finishApp(phone, state);
+  assert.equal(response.headers.get("location"), origin + "/?approval=request-123&wecom=signed-in");
+  assert.deepEqual(sqlite.prepare("SELECT * FROM members ORDER BY id").all(), before);
+  assert.equal(count("auth_identities"), 2);
+  assert.equal(count("oauth_sessions"), 1);
+  const session = sqlite.prepare("SELECT * FROM oauth_sessions").get();
+  assert.equal(session.member_id, "member-one");
+  assert.equal(session.provider, "wecom");
+  const write = sessionWrites(phone)[0];
+  assert.equal(write.options.maxAge, 604800);
+  assert.equal(write.options.secure, true);
+  assert.equal(write.options.httpOnly, true);
+  assert.equal(write.options.sameSite, "lax");
+  assert.equal(session.token_hash, fingerprint(write.value));
+  assert.equal(phone.jar.has(appEntry.WECOM_APP_BROWSER_COOKIE), false);
+  await finishApp(phone, state);
+  assert.equal(count("oauth_sessions"), 1);
+});
+
+test("WeCom app OAuth rejects missing or other-browser nonce, wrong provider, expiry, and state replay before exchange", async () => {
+  for (const scenario of ["other-browser", "wrong-provider", "expired", "replayed"]) {
+    const phone = browser();
+    const state = await startApp(phone);
+    if (scenario === "wrong-provider") sqlite.prepare("UPDATE oauth_transactions SET provider='feishu' WHERE state_hash=?").run(fingerprint(state));
+    if (scenario === "expired") sqlite.prepare("UPDATE oauth_transactions SET expires_at='2000-01-01T00:00:00.000Z' WHERE state_hash=?").run(fingerprint(state));
+    if (scenario === "replayed") sqlite.prepare("UPDATE oauth_transactions SET consumed_at='2026-01-01T00:00:00.000Z' WHERE state_hash=?").run(fingerprint(state));
+    const response = await finishApp(scenario === "other-browser" ? browser() : phone, state);
+    assert.match(response.headers.get("location"), /wecom=failed$/u);
+    assert.equal(count("oauth_sessions"), 0);
+    assert.equal(globalThis[stateKey].exchangeCalls.length, 0);
+  }
+});
+
+test("WeCom app login never creates or merges unbound identities and rejects disabled or unlinked members", async () => {
+  for (const scenario of ["unbound", "unlinked", "departed"]) {
+    const phone = browser();
+    const state = await startApp(phone);
+    if (scenario === "unbound") globalThis[stateKey].wecomIdentity.providerSubject = "ww_unit_test:unknown";
+    else globalThis[stateKey].wecomIdentity.providerSubject = "ww_unit_test:memberone";
+    if (scenario === "unlinked") sqlite.prepare("UPDATE auth_identities SET unlinked_at='2026-01-01T00:00:00.000Z' WHERE provider='wecom'").run();
+    if (scenario === "departed") {
+      sqlite.prepare("UPDATE auth_identities SET unlinked_at=NULL WHERE provider='wecom'").run();
+      sqlite.prepare("UPDATE members SET status='departed' WHERE id='member-one'").run();
+    }
+    const response = await finishApp(phone, state);
+    assert.match(response.headers.get("location"), scenario === "unbound" ? /wecom=not-linked$/u : /wecom=member-disabled$/u);
+    assert.equal(count("oauth_sessions"), 0);
+    assert.equal(count("members"), 2);
+    assert.equal(count("auth_identities"), 2);
+  }
+});
+
+test("WeCom app failure and denial consume state without issuing a session or exposing provider errors", async () => {
+  const phone = browser();
+  let state = await startApp(phone);
+  const denial = await finishApp(phone, state, "&error=access_denied");
+  assert.match(denial.headers.get("location"), /wecom=failed$/u);
+  assert.equal(globalThis[stateKey].exchangeCalls.length, 0);
+  assert.ok(sqlite.prepare("SELECT consumed_at FROM oauth_transactions WHERE state_hash=?").get(fingerprint(state)).consumed_at);
+  state = await startApp(phone);
+  globalThis[stateKey].exchangeError = true;
+  const failure = await finishApp(phone, state);
+  assert.match(failure.headers.get("location"), /wecom=failed$/u);
+  assert.equal(count("oauth_sessions"), 0);
+  assert.equal(await failure.text(), "");
+});
+
+test("WeCom app start keeps ordinary browsers on manual login and blocks external or auth return destinations", async () => {
+  const pc = browser();
+  const response = await invoke(appLogin.startWecomAppLogin, pc, "/api/auth/wecom/start");
+  assert.equal(response.headers.get("location"), origin + "/?wecom=manual");
+  assert.equal(count("oauth_transactions"), 0);
+  for (const destination of ["https://evil.example/", "//evil.example/", "/api/auth/wecom/start", "/auth/qr"]) {
+    const phone = browser();
+    const state = await startApp(phone, destination);
+    assert.equal(sqlite.prepare("SELECT return_path FROM oauth_transactions WHERE state_hash=?").get(fingerprint(state)).return_path, "/");
+  }
+  globalThis[stateKey].rateAllowed = false;
+  const phone = browser();
+  const blocked = await invoke(appLogin.startWecomAppLogin, phone, "/api/auth/wecom/start", { headers: { "user-agent": "wxwork/4.1" } });
+  assert.match(blocked.headers.get("location"), /wecom=unavailable$/u);
+  assert.equal(phone.jar.size, 0);
+});
+
+test("WeCom app presentation automatically enters only inside WeCom, preserves explicit logout, and cannot loop on failure", () => {
+  for (const ua of ["Mozilla/5.0 Android wxwork/4.1.0", "Mozilla/5.0 iPhone wxwork/4.1.0", "Windows wxwork/4.1.0"]) {
+    assert.equal(appEntry.wecomAppEntry(ua, "?approval=a", true, "login"), "automatic");
+    for (const status of ["failed", "not-linked", "signed-out", "unavailable"]) assert.equal(appEntry.wecomAppEntry(ua, `?wecom=${status}`, true, "login"), "notice");
+    assert.equal(appEntry.wecomAppEntry(ua, "?wecom=manual", true, "login"), "qr");
+    assert.equal(appEntry.wecomAppEntry(ua, "", true, "link"), "qr");
+  }
+  assert.equal(appEntry.wecomAppEntry("Mozilla/5.0 MicroMessenger/8.0", "", true, "login"), "qr");
+  assert.equal(appEntry.wecomAppEntry("wxwork/4.1", "", false, "login"), "qr");
+});
 
 async function start(pc, action = "login", authorized) {
   const response = await invoke(service.startQrLogin, pc, "/api/auth/qr/start", {

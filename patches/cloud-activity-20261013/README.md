@@ -36,7 +36,7 @@ The following browser flows passed: the 24-hour, 3-day and 7-day selectors; acco
 - The same genuine guest browser remained one visit after reload. Its last-seen display advanced from 16:25:42 to 16:26:21 while the list remained at 7 identifiers during that check. Later live snapshots reached 8 identifiers.
 - Course snapshot at 16:27:41 showed 7 / 16 / 21 learners for 24h / 3d / 7d, 3 learners with new progress and 5 new task submissions. Honors management returned 3 entries; the knowledge library loaded 320 records.
 - A temporary reverse-proxy 503 response matched only the unique acceptance search query and Cloud view. The production UI cleared its numbers to em dashes, displayed the unavailable message, and offered retry. After removal, retry returned live data. The original Nginx configuration was restored byte-for-byte at 16:22:37; a timed cleanup safeguard was also removed. This was fault injection, not an observed Cloud outage.
-- Current source passed 7 Python activity tests, 4 OA route/client tests, 30 existing WeCom/unified-QR tests, and service-user TypeScript checking. Existing production-build receipts and browser delivery were retained; this source archive does not require a new application release.
+- Current source passed 7 Python activity tests, 4 OA route/client tests, 36 existing WeCom/unified-QR tests, and service-user TypeScript checking. Existing production-build receipts and browser delivery were retained; this source archive does not require a new application release.
 
 ### Explicit evidence limits
 
@@ -48,7 +48,7 @@ The first mobile QR confirmations did not establish this browser's session. Manu
 
 The deployed feature files matched the original PR head `f7c2256e7d7e6d2e70b01bd79b3755626a2c3a13`. A broader inventory of 358 tracked runtime source files found 350 matches and the following 8 pre-existing production differences. Archiving only the statistics patch would therefore leave main behind the running OA.
 
-The six AI presentation/factual-grounding changes were already deployed in `oa-ai-facts-20261012-v1` and recorded in the 2026-10-12 release verification. The two controlled WeCom-diagnostic source files exactly match the already-deployed PR #14 head `4f6a49f1ed7fca85f15e610ceb0a0d8817360af0`. The existing two QR/WeCom test files from that PR are reused. The original PR #14 draft and branch retain their own history.
+The six AI presentation/factual-grounding changes were already deployed in `oa-ai-facts-20261012-v1` and recorded in the 2026-10-12 release verification. The two controlled WeCom-diagnostic source files exactly match the already-deployed PR #14 head `4f6a49f1ed7fca85f15e610ceb0a0d8817360af0`. The diagnostic test increments from that PR are applied to current main's QR/WeCom tests, preserving the later in-app login cases. The original PR #14 draft and branch retain their own history.
 
 | Already-deployed file | Live Git blob SHA |
 | --- | --- |
