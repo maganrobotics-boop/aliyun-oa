@@ -2,6 +2,7 @@ import { getAuthorizedUser } from '../../_lib/auth';
 import { getDb } from '../../../../db';
 import { consumeWriteRateLimit } from '../../../../lib/write-rate-limit';
 import { callFutureStars, FutureStarsError } from '../../../../lib/future-stars-client';
+import { callCloudActivity } from '../../../../lib/cloud-activity-client';
 import { boundedStarsJson, validStarsPayload } from '../../../../chat-cloudflare/src/future-stars-bridge.mjs';
 
 const json = (data: object, status = 200) => Response.json(data, { status, headers: {
@@ -21,6 +22,7 @@ function failure(error: unknown) {
 export async function GET(request: Request) {
   try {
     const user = await authorized(true), url = new URL(request.url), view = url.searchParams.get('view') || 'students';
+    if (view === 'cloud') return json(await callCloudActivity(url.searchParams));
     const operation = ({ arena: 'arena', students: 'people', records: 'records', awards: 'honors', honors: 'honors', recipients: 'recipients', events: 'events' } as Record<string, string>)[view];
     if (!operation) throw new FutureStarsError('查看内容不正确。', 400);
     const params: Record<string, string> = {};

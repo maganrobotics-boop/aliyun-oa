@@ -6,9 +6,9 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Award, BookOpen, ChevronLeft, ChevronRight, ExternalLink, GraduationCap, History, Plus, RefreshCw, Search, ShieldCheck, Sparkles, Trophy, UsersRound } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import './future-stars.css';
-import { ArenaOverview } from './arena-overview';
+import { CloudOverview } from './cloud-overview';
 
-type Tab = 'students' | 'arena' | 'awards' | 'honors';
+type Tab = 'students' | 'cloud' | 'awards' | 'honors';
 type Course = { id: string; title: string; parentId?: string; stage?: string };
 type StageProgress = { id: string; title: string; total: number; submitted: number; completed: number; exempted: number };
 type Learning = { courseId: string; title: string; submissions: number; reviewed: number; lastSubmittedAt?: number; draft?: { updatedAt: number } };
@@ -81,7 +81,7 @@ export function FutureStars() {
     sourceReference: '', recipientEmail: '', bindingNote: '', visibility: 'public', confirmed: false });
   const grantRequest = useRef<{ fingerprint: string; id: string } | null>(null), historySequence = useRef(0);
   useEffect(() => {
-    if (tab === 'arena') return;
+    if (tab === 'cloud') return;
     const controller = new AbortController(); setLoading(true); setError(''); setData(null);
     const params: Record<string, string> = tab === 'students' ? { q, courseId, status, window: timeWindow, sort, page: String(page) } : { status, page: String(page), ...(tab === 'honors' && category ? { category } : {}) };
     void get(tab, params, controller.signal).then(value => { if (!controller.signal.aborted) { setData(value); if (value.courses) setCourses(value.courses); } })
@@ -128,7 +128,7 @@ export function FutureStars() {
     try { const value = await get<{ events: Event[] }>('events', { id: award.id }); if (token === historySequence.current) setHistory({ award, events: value.events }); }
     catch (e) { if (token === historySequence.current) setHistoryError(e instanceof Error ? e.message : '记录暂不可用。'); }
   }
-  const titles: Record<Tab, string> = { students: '上线与学习进度', arena: '竞技场上线与成绩', awards: '竞技赛获奖', honors: '荣誉墙管理' };
+  const titles: Record<Tab, string> = { students: '上线与学习进度', cloud: 'Cloud 上线统计', awards: '竞技赛获奖', honors: '荣誉墙管理' };
   const filteredAwards = data?.awards || [], students = data?.records || [];
   const hasNext = tab === 'students' ? page < (data?.pagination?.totalPages || 0) : Boolean(data?.hasMore);
   return <section className="future-stars" aria-label="未来之星管理">
@@ -141,10 +141,10 @@ export function FutureStars() {
       </button>)}</div>
       <p className="fs-activity-caption">{timeWindows.find(item => item.id === timeWindow)?.label} · 全课程覆盖{data?.summary && <> · {data.summary.progressed} 人有新进展 · 新增提交 {data.summary.newSubmissions} 个课程任务</>}{data?.asOf && <span>截至 {date(data.asOf)}（北京时间）</span>}</p>
     </div>}
-    <nav className="fs-tabs" aria-label="未来之星栏目">{([{ key: 'students', icon: GraduationCap }, { key: 'arena', icon: Award }, { key: 'honors', icon: Trophy }] as const).map(({ key, icon: Icon }) =>
-      <button type="button" key={key} aria-current={tab === key || (key === 'arena' && tab === 'awards') ? 'page' : undefined} onClick={() => selectTab(key)}><Icon size={18} />{titles[key]}</button>)}</nav>
-    {tab === 'arena' ? <ArenaOverview onAwards={() => selectTab('awards')} /> : <>
-    {tab === 'awards' && <button type="button" onClick={() => selectTab('arena')}><ChevronLeft size={14} />返回竞技场上线与成绩</button>}
+    <nav className="fs-tabs" aria-label="未来之星栏目">{([{ key: 'students', icon: GraduationCap }, { key: 'cloud', icon: Award }, { key: 'honors', icon: Trophy }] as const).map(({ key, icon: Icon }) =>
+      <button type="button" key={key} aria-current={tab === key || (key === 'cloud' && tab === 'awards') ? 'page' : undefined} onClick={() => selectTab(key)}><Icon size={18} />{titles[key]}</button>)}</nav>
+    {tab === 'cloud' ? <CloudOverview onAwards={() => selectTab('awards')} /> : <>
+    {tab === 'awards' && <button type="button" onClick={() => selectTab('cloud')}><ChevronLeft size={14} />返回 Cloud 上线统计</button>}
     <div className="fs-section-heading"><div><h2>{titles[tab]}</h2><p>{tab === 'students' ? '默认查看过去24小时上线学员，按全课程累计已提交节数优先、最近活动时间次序排列。覆盖新手村、训练营和实战营全部课程。' : tab === 'awards' ? '登记已确认的获奖事实，获奖记录同时进入荣誉墙。' : '补录、核验账户、调整展示范围，保留每次操作的依据。'}</p></div>
       <div className="fs-inline">{tab !== 'students' && <button className="fs-primary" type="button" onClick={openForm}><Plus size={16} />{tab === 'awards' ? '登记获奖' : '补录荣誉'}</button>}<button type="button" onClick={() => setRevision(n => n + 1)} disabled={loading}><RefreshCw size={15} />刷新</button></div>
     </div>

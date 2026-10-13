@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+cloud-activity.key
+*.env
+*.sqlite3*
