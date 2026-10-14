@@ -1,6 +1,6 @@
 # 企业微信 OA 页面加载恢复，2026-10-14
 
-状态：修复已准备、服务器候选配置语法验证通过；尚未激活生产配置。
+状态：用户于 08:11（北京时间）明确授权上线；08:12:03 已激活生产配置。线上基础验收通过，手机企微最终回调/登录仍待用户复测。
 
 ## 证据与范围
 
@@ -24,11 +24,17 @@
 - `node --check public/oa-login-recovery.js` 通过。
 - `node --test tests/oa-login-recovery.test.mjs`：6 项通过，覆盖主包未执行的恢复入口、12 秒延迟、正常与迟到的加载成功、普通浏览器、OAuth 回调不介入、DOM 未就绪。
 - 候选完整 Nginx 配置 `nginx -t` 通过。
-- 未实施：生产 gzip 字节数验收、真实企微回调和最终登录验收、手机恢复面板视觉验收。
+- 生产首页 200，独立恢复脚本仅注入一次；脚本 200、SHA-256 匹配、no-store。
+- 主 JS：561060 → 157686 字节（减少 71.9%）；三个 CSS 样本减少 78.7%–82.5%。解压后逐字节一致。
+- `/api/session`：匿名 200、企微登录启用、private/no-store。
+- 带企微 UA 的真实 OAuth start 请求：303 到 open.weixin.qq.com/connect/oauth2/authorize，事务 Cookie 保留 Secure/HttpOnly。未模拟授权回调。
+- 新开的云浏览器页面正常进入既有“马淦”会话的工作台；加载按钮和恢复面板均不残留，未见应用错误。
+- GitHub 当前代码提交的附件生命周期、阿里云发布权限两项工作流均成功。
+- 未实施：真实手机企微回调和最终登录验收、手机恢复面板视觉验收。
 
-## 暂存与回滚
+## 发布与回滚
 
-服务器：阿里云。候选文件位于 `/opt/omindos-deploy/oa-login-recovery-20261014/`。
+服务器：阿里云。已激活的发布与回滚文件位于 `/opt/omindos-deploy/oa-login-recovery-20261014/`。
 
 - `oa-login-recovery.js`、`oa-login-recovery.conf`：本次静态脚本与配置片段。
 - `originmind-services.before.conf`：生产配置原样备份。
@@ -39,6 +45,8 @@
 原生产配置 SHA-256：`1055ffd46083b89c14703670cc10ff30edd0a40565fa7d8ea5198388386da916`。
 候选配置 SHA-256：`e5446af5cc6dbbf9eb9aef25a3495716b3ad373d67784bcc382c99b0234b0bd6`。
 
-自动审批拒绝了替换生产配置并重载 Nginx，理由是需要用户明确授权本次生产激活。拒绝后已只读核对原配置哈希未变、首页未引入恢复脚本。不得将本记录当作上线授权。
+首次上线被自动审批拒绝后未变更生产；用户随后明确回复“同意上线修复”。08:12:03 按重新核对的候选配置完成原子替换、nginx -t 和 Nginx reload。OA 进程 PID 675579 未改变。
 
-获授权后：先重新核对生产配置与 manifest；有变化时重做候选合并与预检。按候选原子切换，执行 `nginx -t` 后只 reload Nginx，不重启 OA。随后核对首页脚本注入、JS/CSS 压缩解压后哈希一致、API 状态及浏览器工作台。失败时恢复 before.conf，验证并 reload。真实手机企微成功登录仍须单独验收。
+服务器同目录的 activated.json 和 verification.json 保存本次激活时间与线上验证数据。
+
+回滚时先确认生产配置仍匹配本次候选哈希；若后来另有发布，不可覆盖新变更。需要回滚本次时恢复 originmind-services.before.conf，执行 nginx -t 后 reload Nginx。真实手机企微成功登录仍须单独验收。
