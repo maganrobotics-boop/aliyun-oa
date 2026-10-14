@@ -13,6 +13,7 @@ export type OaAdminResult = {
   verifiedAt?: string | null;
   saved?: boolean;
   connected?: boolean;
+  subtitleProvider?: { baseUrl: string; model: string; keyConfigured: boolean; verifiedAt: string | null; testAvailable: boolean };
 };
 
 export class OaAdminBridgeError extends Error {

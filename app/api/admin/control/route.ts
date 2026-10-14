@@ -84,6 +84,12 @@ export async function POST(request: Request) {
       ...(body.apiKey === undefined ? {} : { apiKey: body.apiKey }),
     };
     else if (action === 'test') payload = { operation: 'test', sessionToken: token };
+    else if (action === 'saveSubtitleConfig' && typeof body.baseUrl === 'string' && typeof body.model === 'string'
+      && (body.apiKey === undefined || typeof body.apiKey === 'string')) payload = {
+      operation: 'subtitle_config_save', sessionToken: token, baseUrl: body.baseUrl, model: body.model,
+      ...(body.apiKey === undefined ? {} : { apiKey: body.apiKey }),
+    };
+    else if (action === 'testSubtitleConfig') payload = { operation: 'subtitle_config_test', sessionToken: token };
     else throw new OaAdminBridgeError('请求内容不正确。', 400);
     const result = await callOaAdmin(payload);
     const cookieStore = await cookies();

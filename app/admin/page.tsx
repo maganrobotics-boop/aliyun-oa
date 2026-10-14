@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { FormEvent, useEffect, useState } from 'react';
-import { ArrowLeft, Bot, CheckCircle2, ExternalLink, KeyRound, LockKeyhole, LogOut, RefreshCw, Save, Settings2, ShieldCheck, Video } from 'lucide-react';
+import { ArrowLeft, Bot, CheckCircle2, ExternalLink, KeyRound, LockKeyhole, LogOut, Mic, RefreshCw, Save, Settings2, ShieldCheck, Video } from 'lucide-react';
 import './admin.css';
 
 type AdminState = {
@@ -15,6 +15,7 @@ type AdminState = {
   activeProvider?: string | null;
   workersAiReady?: boolean;
   verifiedAt?: string | null;
+  subtitleProvider?: { baseUrl: string; model: string; keyConfigured: boolean; verifiedAt: string | null; testAvailable: boolean };
 };
 
 type ApiResult = Partial<AdminState> & { error?: string; saved?: boolean; connected?: boolean };
@@ -42,6 +43,9 @@ export default function AdminPage() {
   const [baseUrl, setBaseUrl] = useState('https://dashscope.aliyuncs.com/compatible-mode/v1');
   const [model, setModel] = useState('qwen-plus');
   const [apiKey, setApiKey] = useState('');
+  const [subtitleBaseUrl, setSubtitleBaseUrl] = useState('https://maas.qianwenaiapi.com/compatible-mode/v1');
+  const [subtitleModel, setSubtitleModel] = useState('qwen3.8-livetranslate-flash-realtime');
+  const [subtitleApiKey, setSubtitleApiKey] = useState('');
 
   const apply = (data: ApiResult) => {
     if (typeof data.initialized === 'boolean' && typeof data.signedIn === 'boolean') {
@@ -49,6 +53,10 @@ export default function AdminPage() {
     } else if (state) setState({ ...state, ...data });
     if (typeof data.baseUrl === 'string' && data.baseUrl) setBaseUrl(data.baseUrl);
     if (typeof data.model === 'string' && data.model) setModel(data.model);
+    if (data.subtitleProvider) {
+      setSubtitleBaseUrl(data.subtitleProvider.baseUrl);
+      setSubtitleModel(data.subtitleProvider.model);
+    }
   };
 
   useEffect(() => {
@@ -96,7 +104,14 @@ export default function AdminPage() {
 
   const logout = async () => {
     const result = await run({ action: 'logout' }, '管理会话已退出。');
-    if (result) setState(current => current ? { ...current, signedIn: false } : current);
+    if (result) { setApiKey(''); setSubtitleApiKey(''); setState(current => current ? { ...current, signedIn: false } : current); }
+  };
+
+  const saveSubtitles = async (event: FormEvent) => {
+    event.preventDefault();
+    const result = await run({ action: 'saveSubtitleConfig', baseUrl: subtitleBaseUrl, model: subtitleModel,
+      ...(subtitleApiKey.trim() ? { apiKey: subtitleApiKey.trim() } : {}) }, '实时字幕连接已验证并加密保存。');
+    if (result) setSubtitleApiKey('');
   };
 
   return <main className="admin-console">
@@ -123,6 +138,7 @@ export default function AdminPage() {
     </section>}
 
     {state?.signedIn && !resetOpen && <div className="admin-grid">
+      <div className="admin-connections">
       <section className="admin-card admin-model-card">
         <div className="admin-card-heading"><span className="admin-icon"><Bot /></span><div><h2>阿里云百炼模型</h2><p>用于 OA 大模型问答、任务生成和 Chat 回答。</p></div><span className={`admin-status ${state.activeProvider === 'bailian' ? 'ready' : ''}`}>{state.activeProvider === 'bailian' ? '已连接' : '待配置'}</span></div>
         <form className="admin-form" onSubmit={save}>
@@ -133,6 +149,20 @@ export default function AdminPage() {
           <div className="admin-actions"><button className="primary" type="submit" disabled={busy || !state.encryptionReady}><Save size={17} />{busy ? '正在验证…' : '验证并保存'}</button><button type="button" disabled={busy || !state.keyConfigured} onClick={() => void run({ action: 'test' }, '当前模型配置连接正常。')}><RefreshCw size={17} />检测当前连接</button><a href="https://bailian.console.aliyun.com/" target="_blank" rel="noreferrer">打开百炼控制台 <ExternalLink size={14} /></a></div>
         </form>
       </section>
+
+      <section className="admin-card admin-subtitle-card">
+        <div className="admin-card-heading"><span className="admin-icon"><Mic /></span><div><h2>实时字幕</h2><p>用于日语与中文连续字幕，单独保存语音服务的地址和普通 API Key。</p></div><span className={`admin-status ${state.subtitleProvider?.verifiedAt ? 'ready' : ''}`}>{state.subtitleProvider?.verifiedAt ? '连接已验证' : '待配置'}</span></div>
+        <form className="admin-form" onSubmit={saveSubtitles}>
+          <label><span>语音 API Base URL</span><input type="url" value={subtitleBaseUrl} maxLength={300} onChange={event => setSubtitleBaseUrl(event.target.value)} required /><small>使用千问平台按量付费地址，配合普通 API Key。</small></label>
+          <label><span>实时翻译模型</span><input value={subtitleModel} readOnly /></label>
+          <label><span>语音 API Key</span><input type="password" value={subtitleApiKey} maxLength={400} autoComplete="off" onChange={event => setSubtitleApiKey(event.target.value)} placeholder={state.subtitleProvider?.keyConfigured ? '已安全保存；留空则保持不变' : '填写普通 API Key'} required={!state.subtitleProvider?.keyConfigured} /><small>请填写普通 Key（如 sk-ws- 开头），不能填写 sk-sp- 套餐 Key。保存后不回显。</small></label>
+          <div className="admin-metadata"><span>上次连接验证：{state.subtitleProvider?.verifiedAt ? new Date(state.subtitleProvider.verifiedAt).toLocaleString('zh-CN') : '尚未验证'}</span></div>
+          <small>验证不录音。真实字幕效果仍需语音测试，语音权益抵扣以平台账单为准。</small>
+          {state.subtitleProvider?.testAvailable === false && <small role="status">语音验证服务尚未就绪，请稍后刷新。</small>}
+          <div className="admin-actions"><button className="primary" type="submit" disabled={busy || !state.encryptionReady || state.subtitleProvider?.testAvailable === false}><Save size={17} />{busy ? '正在验证…' : '验证并保存语音配置'}</button><button type="button" disabled={busy || !state.subtitleProvider?.keyConfigured || state.subtitleProvider?.testAvailable === false} onClick={() => void run({ action: 'testSubtitleConfig' }, '已保存的语音连接验证通过。')}><RefreshCw size={17} />检测语音连接</button></div>
+        </form>
+      </section>
+      </div>
 
       <aside className="admin-side">
         <section className="admin-card"><div className="admin-card-heading"><span className="admin-icon"><Settings2 /></span><div><h2>管理入口</h2><p>更多实验室 OA 管理工具。</p></div></div><nav className="admin-links"><Link href="/admin/meeting-bot"><Video />飞书会议机器人</Link><Link href="/admin/meeting-minutes"><Settings2 />会议纪要管理</Link></nav></section>
