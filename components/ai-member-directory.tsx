@@ -81,7 +81,7 @@ export function OaAiMemberProvider({ children, onTeamChat }: { children: ReactNo
     {children}
     <Dialog open={pickerOpen} onOpenChange={setPickerOpen}><DialogContent className="oa-chat-picker" onCloseAutoFocus={event => { const action = afterPickerClose.current; if (action) { event.preventDefault(); afterPickerClose.current = null; window.requestAnimationFrame(action); } }}><DialogHeader><DialogTitle>开始聊天</DialogTitle><DialogDescription>选择 AI 伙伴；每个角色分别保存与您的对话。</DialogDescription></DialogHeader>
       <AiMemberChatChoices />
-      <div className="oa-chat-picker-other"><button type="button" onClick={() => openDestination(chat.showAi)}><Bot /><span><strong>AI 学长</strong><small>知识问答、资料整理与会议功能</small></span></button><button type="button" onClick={() => openDestination(chat.chooseMember)}><MessageCircle /><span><strong>与成员私聊</strong><small>选择已通过 OA 准入的成员</small></span></button><button type="button" onClick={() => openDestination(onTeamChat)}><MessageCircle /><span><strong>团队消息</strong><small>继续原有消息与协作</small></span></button></div>
+      <div className="oa-chat-picker-other"><button type="button" onClick={() => openDestination(chat.showAi)}><Bot /><span><strong>AI 助研</strong><small>知识问答、资料整理与会议功能</small></span></button><button type="button" onClick={() => openDestination(chat.chooseMember)}><MessageCircle /><span><strong>与成员私聊</strong><small>选择已通过 OA 准入的成员</small></span></button><button type="button" onClick={() => openDestination(onTeamChat)}><MessageCircle /><span><strong>团队消息</strong><small>继续原有消息与协作</small></span></button></div>
     </DialogContent></Dialog>
     <AiMemberInteraction member={selected} mode={interactionMode} onClose={() => setSelected(null)} />
   </WorkspaceContext.Provider>;
