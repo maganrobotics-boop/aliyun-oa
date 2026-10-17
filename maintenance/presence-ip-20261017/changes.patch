@@ -1,0 +1,236 @@
+diff --git a/components/future-stars/platform-presence.tsx b/components/future-stars/platform-presence.tsx
+--- a/components/future-stars/platform-presence.tsx
++++ b/components/future-stars/platform-presence.tsx
+@@ -8,7 +8,13 @@
+ type Kind = 'oa' | 'school' | 'registered' | 'guest';
+ type Summary = { registered: number; guests: number; oa: number; school: number; ordinary: number; total: number };
+ type Presence = { complete: boolean; trackingStartedAt: number; window: Window; summary: Summary;
++  groupBy: 'account';
+   records: { id: string; name: string; kind: Kind; lastSeenAt: number; apps: string[]; network?: { ip: string; country: string | null; province: string | null; status: string; collectedAt: number; onlineSeconds?: number | null } | null }[];
++  pagination: { page: number; hasMore: boolean } };
++type IpPresence = { complete: boolean; trackingStartedAt: number; window: Window; groupBy: 'ip';
++  summary: { total: number; onlineSeconds: number; unrecorded: number };
++  records: { id: string; ip: string; country: string | null; province: string | null; status: string;
++    collectedAt: number; lastSeenAt: number; subjectCount: number; onlineSeconds: number | null }[];
+   pagination: { page: number; hasMore: boolean } };
+ const windows: { id: Window; label: string }[] = [
+   { id: '24h', label: '过去24小时' }, { id: '3d', label: '近3天' }, { id: '7d', label: '近7天' },
+@@ -27,18 +33,19 @@
+ 
+ export function PlatformPresence() {
+   const [window, setWindow] = useState<Window>('24h'), [page, setPage] = useState(1);
+-  const [revision, setRevision] = useState(0), [data, setData] = useState<Presence | null>(null);
++  const [groupBy, setGroupBy] = useState<'ip' | 'account'>('ip');
++  const [revision, setRevision] = useState(0), [data, setData] = useState<Presence | IpPresence | null>(null);
+   const [asOf, setAsOf] = useState(0);
+   const [loading, setLoading] = useState(true), [error, setError] = useState('');
+   useEffect(() => {
+     const controller = new AbortController();
+     setLoading(true); setError(''); setData(null);
+-    const params = new URLSearchParams({ window, page: String(page) });
++    const params = new URLSearchParams({ window, page: String(page), groupBy });
+     void fetch('/api/admin/platform-presence?' + params, {
+       credentials: 'same-origin', cache: 'no-store',
+       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
+     }).then(async response => {
+-      const body = await response.json() as Presence & { error?: string };
++      const body = await response.json() as (Presence | IpPresence) & { error?: string };
+       if (!response.ok) throw new Error(body.error || '用户上线信息暂不可用。');
+       if (!controller.signal.aborted) { setData(body); setAsOf(Date.now()); }
+     }).catch(reason => {
+@@ -46,39 +53,59 @@
+         ? '统计读取超时，请重试。' : reason instanceof Error ? reason.message : '读取未完成，请重试。');
+     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+     return () => controller.abort();
+-  }, [window, page, revision]);
++  }, [window, page, revision, groupBy]);
+   const collectingHistory = data && !data.complete && data.trackingStartedAt > asOf - windowMs[window];
++  const accountData = data?.groupBy === 'account' ? data : null;
++  const ipData = data?.groupBy === 'ip' ? data : null;
+   return <div className="fs-presence" aria-label="用户上线信息">
+     <div className="fs-section-heading"><div><h2>用户上线信息</h2>
+-      <p>汇总各入口的近期上线用户，按统一账户和游客编号去重。</p></div>
++      <p>同一 IP 在所选时段只计一次访问，合并已记录的在线时长。</p></div>
+       <button type="button" disabled={loading} onClick={() => setRevision(value => value + 1)}>
+         <RefreshCw size={15} />刷新</button>
++    </div>
++    <div className="fs-presence-windows" role="group" aria-label="访问统计方式">
++      <button type="button" aria-pressed={groupBy === 'ip'} onClick={() => { setGroupBy('ip'); setPage(1); }}>按 IP 查看</button>
++      <button type="button" aria-pressed={groupBy === 'account'} onClick={() => { setGroupBy('account'); setPage(1); }}>账号明细</button>
+     </div>
+     <div className="fs-presence-windows" role="group" aria-label="上线统计时段">
+       {windows.map(item => <button type="button" key={item.id} aria-pressed={window === item.id}
+         onClick={() => { setWindow(item.id); setPage(1); }}>{item.label}</button>)}
+     </div>
+     {data?.complete === false && <div className="fs-presence-partial" role="alert">
+-      {collectingHistory ? '已展示自统一身份开始采集后的确认人数，所选窗口的早期历史尚未全量。' : '已展示当前确认人数；部分来源尚未完成同步，待同步记录未计入。'}
++      {collectingHistory ? '已展示开始采集后的确认记录，所选窗口的早期历史尚未全量。' : '已展示当前确认记录；部分来源尚未完成同步，待同步记录未计入。'}
+     </div>}
+-    <div className="fs-presence-summary" aria-label="所选时段上线人数">
+-      {metrics.map(metric => <div key={metric.key}><span>{metric.label}{data && !data.complete ? "（已采集）" : ""}</span>
+-        <strong>{loading || !Number.isSafeInteger(data?.summary?.[metric.key]) || Number(data?.summary?.[metric.key]) < 0 ? '—' : data?.summary?.[metric.key]}<small>人</small></strong>
++    <div className="fs-presence-summary" aria-label="所选时段访问统计">
++      {groupBy === 'ip' ? <>
++        <div><span>独立 IP 访问</span><strong>{loading || !ipData ? '—' : ipData.summary.total}<small>次</small></strong></div>
++        <div><span>累计已记录在线时长</span><strong className="fs-presence-duration">{loading || !ipData ? '—' : duration(ipData.summary.onlineSeconds)}</strong></div>
++        <div><span>时长尚未记录</span><strong>{loading || !ipData ? '—' : ipData.summary.unrecorded}<small>个 IP</small></strong></div>
++      </> : metrics.map(metric => <div key={metric.key}><span>{metric.label}{data && !data.complete ? "（已采集）" : ""}</span>
++        <strong>{loading || !accountData ? '—' : accountData.summary[metric.key]}<small>人</small></strong>
+       </div>)}
+     </div>
+-    <p className="fs-activity-caption">注册用户包括 OA 成员、校内用户和普通注册用户；游客按固定匿名编号统计。
+-      {data && <span>上线记录始于 {date(data.trackingStartedAt)}（北京时间），此前历史不追溯。</span>}
++    <p className="fs-activity-caption">{groupBy === 'ip' ? '同一 IP 下的账号和游客合并为一次访问；共用网络的多人可能使用同一 IP。' : '注册用户包括 OA 成员、校内用户和普通注册用户；游客按固定匿名编号统计。'}
++      {data && <span>{groupBy === 'ip' ? '完整 IP 采集' : '上线记录'}始于 {date(data.trackingStartedAt)}（北京时间）；{groupBy === 'ip' ? '此前仅展示已确认的 IP 记录，未采集的不补算。' : '此前历史不追溯。'}</span>}
+     </p>
+     {error && <div className="fs-error" role="alert">{error}
+       <button type="button" onClick={() => setRevision(value => value + 1)}>重新读取</button>
+     </div>}
+     {loading ? <div className="fs-empty" role="status"><RefreshCw size={22} />正在读取用户上线信息…</div>
+       : data && <>
+-        <div className="fs-section-heading fs-presence-record-heading"><div><h2>上线明细</h2>
+-          <p>按最近活动排序，每页最多 20 位用户。时长按可见页面心跳估算，超过 90 秒的中断不累计，多标签页不重复计时；历史未采集的不补算。完整 IP 仅管理员可见；归属地由 IP 估算，使用 VPN 时可能显示出口地区。</p></div></div>
++        <div className="fs-section-heading fs-presence-record-heading"><div><h2>{groupBy === 'ip' ? 'IP 访问明细' : '上线明细'}</h2>
++          <p>按最近活动排序，每页最多 20 {groupBy === 'ip' ? '个 IP' : '位用户'}。时长按可见页面心跳估算，超过 90 秒的中断不累计，重叠区间合并；部分入口和历史时段未采集的不补算。完整 IP 仅管理员可见；归属地由 IP 估算。</p></div></div>
+         {data.records.length === 0 ? <div className="fs-empty"><UsersRound size={25} />
+-          {data.complete ? '所选时段暂无用户上线记录。' : '当前已采集范围内暂无上线记录；此前历史不追溯。'}
+-        </div> : <div className="fs-arena-players">{data.records.map((row, index) => <article className="fs-arena-player" key={row.id}>
++          {data.complete ? '所选时段暂无访问记录。' : '当前已采集范围内暂无访问记录；此前历史不追溯。'}
++        </div> : ipData ? <div className="fs-arena-players">{ipData.records.map((row, index) => <article className="fs-arena-player" key={row.id}>
++          <div className="fs-presence-row"><div className="fs-person">
++            <b className="fs-rank">{(page - 1) * 20 + index + 1}</b><span>IP</span>
++            <div><h3>{row.ip}</h3><p>1 次访问 · {row.subjectCount} 个账号或游客标识</p></div>
++          </div><div className="fs-arena-score"><label>最近活动（北京时间）</label><strong>{date(row.lastSeenAt)}</strong></div>
++            <div className="fs-presence-ip-duration"><span>已记录在线时长</span><strong>{duration(row.onlineSeconds)}</strong></div>
++          </div>
++          <div className="fs-presence-network"><div><span>IP 归属地（国家／省份）</span><strong>{[row.country, row.province].filter(Boolean).join(' · ') || (row.status === 'private' ? '内网地址' : '暂无法识别')}</strong></div>
++            <div><span>IP 最近采集时间（北京时间）</span><time>{date(row.collectedAt)}</time></div>
++          </div>
++        </article>)}</div> : accountData && <div className="fs-arena-players">{accountData.records.map((row, index) => <article className="fs-arena-player" key={row.id}>
+           <div className="fs-presence-row"><div className="fs-person">
+             <b className="fs-rank">{(page - 1) * 20 + index + 1}</b>
+             <span>{row.kind === 'guest' ? '客' : row.name.slice(0, 1)}</span>
+@@ -88,7 +115,7 @@
+               ? row.apps.map(app => <span className="fs-pill" key={app}>{apps[app] || app}</span>)
+               : <span className="fs-no-score">入口暂未记录</span>}</div>
+           </div>
+-          <div className="fs-presence-network"><div><span>在线时长（当前 IP／所选时段）</span><strong>{duration(row.network?.onlineSeconds)}</strong></div><div><span>IP 地址</span><code>{row.network?.ip || '未记录'}</code></div>
++          <div className="fs-presence-network"><div><span>已记录在线时长（当前 IP／所选时段）</span><strong>{duration(row.network?.onlineSeconds)}</strong></div><div><span>IP 地址</span><code>{row.network?.ip || '未记录'}</code></div>
+             <div><span>IP 归属地（国家／省份）</span><strong>{row.network ? ([row.network.country, row.network.province].filter(Boolean).join(' · ') || (row.network.status === 'private' ? '内网地址' : '暂无法识别')) : '未记录'}</strong></div>
+             {row.network && <div><span>IP 采集时间（北京时间）</span><time>{date(row.network.collectedAt)}</time></div>}
+           </div>
+diff --git a/components/future-stars/platform-presence.css b/components/future-stars/platform-presence.css
+--- a/components/future-stars/platform-presence.css
++++ b/components/future-stars/platform-presence.css
+@@ -6,6 +6,8 @@
+ .fs-presence-summary>div>span{font-size:12px;color:#6a7d76}
+ .fs-presence-summary strong{font-size:28px;color:#23563f;line-height:1.2;font-weight:650;font-variant-numeric:tabular-nums}
+ .fs-presence-summary small{font-size:11px;font-weight:400;margin-left:7px}
++.fs-presence-summary strong.fs-presence-duration{font-size:21px;overflow-wrap:anywhere}
++.fs-presence-ip-duration{display:grid;gap:6px}.fs-presence-ip-duration>span{font-size:11px;color:#6a7d76}.fs-presence-ip-duration>strong{font-size:17px;color:#23563f;font-variant-numeric:tabular-nums}
+ .fs-presence-partial{border:1px solid #dcc799;border-radius:9px;padding:12px 14px;background:#fff9eb;color:#7a622e;font-size:12px;line-height:1.8;margin-bottom:14px}
+ .fs-presence-record-heading{margin-top:22px}
+ .fs-presence-row{display:grid;grid-template-columns:minmax(180px,1.2fr) minmax(170px,1fr) minmax(140px,1fr);gap:16px;align-items:center}
+diff --git a/lib/platform-directory-client.ts b/lib/platform-directory-client.ts
+--- a/lib/platform-directory-client.ts
++++ b/lib/platform-directory-client.ts
+@@ -3,7 +3,7 @@
+ import { callFutureStars, FutureStarsError } from './future-stars-client';
+ import { validatePlatformActor } from './platform-activity.mjs';
+ 
+-export type DirectoryParams = { operation: 'presence'|'activity'; window?: '24h'|'3d'|'7d'; page?: number|string; q?: string; subject?: string; detail?: string };
++export type DirectoryParams = { operation: 'presence'|'activity'; window?: '24h'|'3d'|'7d'; page?: number|string; q?: string; subject?: string; detail?: string; groupBy?: 'account'|'ip' };
+ export type PresenceRecord = { id: string; name: string; kind: 'oa'|'school'|'registered'|'guest'; lastSeenAt: number; apps: string[] };
+ export type PresencePayload = {
+   source: 'platform_directory'; complete: boolean; trackingStartedAt: number; window: string;
+@@ -13,7 +13,8 @@
+ 
+ /** Only this server-selected, currently admitted OA administrator can query the directory. */
+ export async function callPlatformDirectory(input: DirectoryParams): Promise<Record<string, unknown> & Partial<PresencePayload>> {
+-  if (!['presence','activity'].includes(input.operation) || Object.keys(input).some(key => !['operation','window','page','q','subject','detail'].includes(key))) throw new FutureStarsError('查询内容不正确。', 400);
++  if (!['presence','activity'].includes(input.operation) || Object.keys(input).some(key => !['operation','window','page','q','subject','detail','groupBy'].includes(key))
++    || (input.groupBy !== undefined && (input.operation !== 'presence' || !['account','ip'].includes(input.groupBy)))) throw new FutureStarsError('查询内容不正确。', 400);
+   const window = input.window || '24h', page = String(input.page || '1');
+   if (!['24h','3d','7d'].includes(window) || !/^[1-9][0-9]{0,3}$/u.test(page) || Number(page) > 1000
+     || (input.q !== undefined && (typeof input.q !== 'string' || input.q.length > 100))
+@@ -35,7 +36,10 @@
+   if (result.source !== 'platform_directory' || !Array.isArray(result.records) || result.records.length > 20) throw new FutureStarsError('平台用户记录暂不可用。',503);
+   if (input.operation === 'presence') {
+     const summary = result.summary as Record<string,unknown> | undefined;
+-    if (typeof result.complete !== 'boolean' || typeof result.trackingStartedAt !== 'number' || !summary || !['registered','guests','oa','school','ordinary','total'].every(key => Number.isSafeInteger(summary[key]) && Number(summary[key]) >= 0)) throw new FutureStarsError('上线统计尚未完整。',503);
++    const keys = input.groupBy === 'ip' ? ['total','onlineSeconds','unrecorded'] : ['registered','guests','oa','school','ordinary','total'];
++    if (typeof result.complete !== 'boolean' || typeof result.trackingStartedAt !== 'number' || !summary
++      || (input.groupBy === 'ip' && result.groupBy !== 'ip')
++      || !keys.every(key => Number.isSafeInteger(summary[key]) && Number(summary[key]) >= 0)) throw new FutureStarsError('上线统计尚未完整。',503);
+   }
+   return result as Record<string,unknown> & Partial<PresencePayload>;
+ }
+diff --git a/app/api/admin/platform-presence/route.ts b/app/api/admin/platform-presence/route.ts
+--- a/app/api/admin/platform-presence/route.ts
++++ b/app/api/admin/platform-presence/route.ts
+@@ -25,18 +25,32 @@
+ function object(value: unknown): value is Record<string, unknown> {
+   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+ }
+-function publicPresence(value: unknown, window: string, page: number) {
++function publicPresence(value: unknown, window: string, page: number, groupBy: 'ip' | 'account') {
+   if (!object(value) || typeof value.complete !== 'boolean' || value.window !== window
+       || !Number.isSafeInteger(value.trackingStartedAt) || Number(value.trackingStartedAt) < 0
+       || !object(value.summary) || !Array.isArray(value.records) || value.records.length > 20)
+     throw new PresenceError('上线信息尚未完整，请稍后重试。', 503);
+   const summary: Record<string, number> = {};
+-  for (const key of ['registered', 'guests', 'oa', 'school', 'ordinary', 'total']) {
++  if (groupBy === 'ip' && value.groupBy !== 'ip') throw new PresenceError('IP 访问统计暂不可用。', 503);
++  for (const key of groupBy === 'ip' ? ['total', 'onlineSeconds', 'unrecorded'] : ['registered', 'guests', 'oa', 'school', 'ordinary', 'total']) {
+     const count = value.summary[key];
+     if (!Number.isSafeInteger(count) || Number(count) < 0) throw new PresenceError('上线信息尚未完整，请稍后重试。', 503);
+     summary[key] = Number(count);
+   }
+   const records = value.records.map((row: unknown) => {
++    if (groupBy === 'ip') {
++      if (!object(row) || typeof row.id !== 'string' || !/^ip_[a-f0-9]{64}$/u.test(row.id)
++        || typeof row.ip !== 'string' || !isIP(row.ip)
++        || !Number.isSafeInteger(row.lastSeenAt) || Number(row.lastSeenAt) < 0
++        || !Number.isSafeInteger(row.collectedAt) || Number(row.collectedAt) < 0
++        || !Number.isSafeInteger(row.subjectCount) || Number(row.subjectCount) < 1
++        || !['resolved', 'unknown', 'private'].includes(String(row.status))
++        || ![row.country, row.province].every(v => v === null || (typeof v === 'string' && v.length <= 128 && !/[\u0000-\u001f\u007f]/u.test(v)))
++        || !(row.onlineSeconds === null || (Number.isSafeInteger(row.onlineSeconds) && Number(row.onlineSeconds) >= 0)))
++        throw new PresenceError('IP 访问明细暂不可用。', 503);
++      return { id: row.id, ip: row.ip, country: row.country, province: row.province, status: row.status,
++        collectedAt: row.collectedAt, lastSeenAt: row.lastSeenAt, subjectCount: row.subjectCount, onlineSeconds: row.onlineSeconds };
++    }
+     if (!object(row) || typeof row.id !== 'string' || !row.id || row.id.length > 256
+         || typeof row.name !== 'string' || !row.name || row.name.length > 256
+         || !['oa', 'school', 'registered', 'guest'].includes(String(row.kind))
+@@ -54,7 +68,7 @@
+   const pagination = object(value.pagination) ? value.pagination : value;
+   if (pagination.page !== page || typeof pagination.hasMore !== 'boolean')
+     throw new PresenceError('上线信息分页暂不可用，请稍后重试。', 503);
+-  return { complete: value.complete, trackingStartedAt: value.trackingStartedAt, window, summary, records,
++  return { complete: value.complete, trackingStartedAt: value.trackingStartedAt, window, groupBy, summary, records,
+     pagination: { page, hasMore: pagination.hasMore } };
+ }
+ export async function GET(request: Request) {
+@@ -62,15 +76,16 @@
+     const user = await getAuthorizedUser({ readOnly: true });
+     await assertLiveAdministrator(user);
+     const params = new URL(request.url).searchParams;
+-    for (const key of params.keys()) if (!['window', 'page'].includes(key) || params.getAll(key).length !== 1)
++    for (const key of params.keys()) if (!['window', 'page', 'groupBy'].includes(key) || params.getAll(key).length !== 1)
+       throw new PresenceError('统计筛选参数不正确。', 400);
+-    const window = params.get('window') ?? '24h', pageValue = params.get('page') ?? '1';
+-    if (!['24h', '3d', '7d'].includes(window) || !/^[1-9][0-9]{0,3}$/u.test(pageValue) || Number(pageValue) > 1000)
++    const window = params.get('window') ?? '24h', pageValue = params.get('page') ?? '1', groupBy = params.get('groupBy') ?? 'ip';
++    if (!['24h', '3d', '7d'].includes(window) || !['ip', 'account'].includes(groupBy) || !/^[1-9][0-9]{0,3}$/u.test(pageValue) || Number(pageValue) > 1000)
+       throw new PresenceError('统计筛选参数不正确。', 400);
+     const page = Number(pageValue);
+-    const result = await callPlatformDirectory({ operation: 'presence', window: window as '24h' | '3d' | '7d', page });
++    const selectedGroup = groupBy as 'ip' | 'account';
++    const result = await callPlatformDirectory({ operation: 'presence', window: window as '24h' | '3d' | '7d', page, groupBy: selectedGroup });
+     await assertLiveAdministrator(user);
+-    return json(publicPresence(result, window, page));
++    return json(publicPresence(result, window, page, selectedGroup));
+   } catch (error) {
+     if (error instanceof PresenceError) return json({ error: error.message }, error.status);
+     return json({ error: '用户上线信息暂不可用，请稍后重试。' }, 503);

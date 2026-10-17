@@ -1,0 +1,15 @@
+{
+  "algorithm": "sha256",
+  "base": {
+    "components/future-stars/platform-presence.tsx": "a799228bab15c4407024c59fd5550e7a4d033ff534dbec8183eb1295294cc9a1",
+    "components/future-stars/platform-presence.css": "ed1d59d7c9271eba8fcab0d702aadee6b77ce54b41508ef0ac7e20def93107d4",
+    "lib/platform-directory-client.ts": "c41b7983977f30ae095dc9c0a34fc29aa92b78e58a8b7536af3e5e48634f2e56",
+    "app/api/admin/platform-presence/route.ts": "936b53ed9916fc78af3d1035b29ee47b0b3b61a43c836f734b21d7b037a069a4"
+  },
+  "result": {
+    "components/future-stars/platform-presence.tsx": "0aae99c9ead0311a50f16c3b224f5671a22f1691a949bdc267e0993851f152cc",
+    "components/future-stars/platform-presence.css": "fab95db263d27c011888d2c0bf0d68f92278fcae1cc3e42e48a896f7dacd4ea0",
+    "lib/platform-directory-client.ts": "69af98831d58d77748428e87a857c6005d17ad3519c643c8b86a3f9b084ae2d5",
+    "app/api/admin/platform-presence/route.ts": "e778944b51586cbdeee1dc6e882e0c51f0d8486eb399b7c260808bc0edfb26f2"
+  }
+}
