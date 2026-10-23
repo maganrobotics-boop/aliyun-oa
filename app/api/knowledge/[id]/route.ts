@@ -136,7 +136,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const submitterIdentityIsExact = submitterMemberIdMatches && submitterEmailMatches;
     const adminSelfManagementAllowed = access.actor.isAdmin
       && submitterIdentityIsExact
-      && (changesVisibility || reviewAction === "approve");
+      && (changesVisibility || reviewAction === "approve" || reviewAction === "return");
 
     if (activatesAdminEdit) {
       if (!access.actor.isAdmin) return privateJson({ error: "只有 OA 系统管理员可以启用修改后的正式知识。" }, { status: 403 });
@@ -170,7 +170,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
 
     if (!canReviewKnowledge(access.authorized)) return privateJson({ error: "只有项目负责人或 OA 管理员可以审核知识。" }, { status: 403 });
-    if (submitterIdentityOverlaps && !adminSelfManagementAllowed) return privateJson({ error: access.actor.isAdmin ? "系统管理员本人只能批准自己的知识或调整可见范围。" : "投稿人不能审核自己的知识。" }, { status: 403 });
+    if (submitterIdentityOverlaps && !adminSelfManagementAllowed) return privateJson({ error: access.actor.isAdmin ? "系统管理员本人只能批准、退回自己的待审知识或调整可见范围。" : "投稿人不能审核自己的知识。" }, { status: 403 });
     if (changesVisibility) {
       if (existing.status !== "active") return privateJson({ error: "只有已入库且仍有效的知识可以调整可见范围。" }, { status: 409 });
       if (existing.visibility === approvalVisibility) return privateJson({ error: "知识已经是所选可见范围。" }, { status: 409 });
