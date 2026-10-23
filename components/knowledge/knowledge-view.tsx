@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DEFAULT_KNOWLEDGE_RETURN_NOTE, returnKnowledgeBatch } from "@/lib/knowledge-bulk-return.mjs";
 import { KnowledgeWeeklyDistribution } from "./weekly-distribution";
 import {
   AlertTriangle,
@@ -236,7 +237,8 @@ function KnowledgeMinePanel({ items, loading, error, onRetry, onEdit, onDeleted,
 
 function KnowledgeReviewPanel({ items, pendingCount, loading, error, onRetry, onOpen }: { items: KnowledgeItem[]; pendingCount: number; loading: boolean; error: string; onRetry: () => void; onOpen: (item: KnowledgeItem) => void }) {
   const [checked, setChecked] = useState<string[]>([]);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<"approve" | "return" | null>(null);
+  const [returnNote, setReturnNote] = useState(DEFAULT_KNOWLEDGE_RETURN_NOTE);
   const [bulkVisibility, setBulkVisibility] = useState<KnowledgeVisibility>("internal");
   const [bulkPublicConfirmation, setBulkPublicConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
@@ -247,13 +249,14 @@ function KnowledgeReviewPanel({ items, pendingCount, loading, error, onRetry, on
   useEffect(() => () => { stopped.current = true; }, []);
   const eligible = items.filter(item => item.status === "pending" && item.canReview !== false);
   const chosen = eligible.filter(item => checked.includes(item.id));
+  const returnable = chosen.filter(item => item.canReturn !== false);
   const all = eligible.length > 0 && chosen.length === eligible.length;
-  const toggle = (id: string) => { setConfirming(false); setChecked(value => value.includes(id) ? value.filter(key => key !== id) : [...value, id]); };
+  const toggle = (id: string) => { setConfirming(null); setChecked(value => value.includes(id) ? value.filter(key => key !== id) : [...value, id]); };
   const run = async () => {
     if (running.current || !chosen.length || (bulkVisibility === "public" && bulkPublicConfirmation !== PUBLIC_KNOWLEDGE_CONFIRMATION)) return;
     const visibility = bulkVisibility;
     const publicConfirmation = bulkPublicConfirmation;
-    running.current = true; stopped.current = false; setBusy(true); setConfirming(false); setFailures([]);
+    running.current = true; stopped.current = false; setBusy(true); setConfirming(null); setFailures([]);
     const snapshot = chosen.map(item => ({ ...item }));
     const succeeded: string[] = [];
     const failed: string[] = [];
@@ -297,23 +300,53 @@ function KnowledgeReviewPanel({ items, pendingCount, loading, error, onRetry, on
       window.dispatchEvent(new Event("oa-library-updated"));
     }
   };
+  const runReturn = async () => {
+    if (running.current || confirming !== "return" || !returnable.length) return;
+    running.current = true; stopped.current = false; setBusy(true); setConfirming(null); setFailures([]);
+    const snapshot = returnable.map(item => ({ ...item }));
+    try {
+      const result = await returnKnowledgeBatch(snapshot, returnNote, {
+        shouldStop: () => stopped.current,
+        onProgress: ({ index, total, title }) => setProgress(`正在退回 ${index} / ${total}：${title}`),
+      });
+      setChecked(value => value.filter(id => !result.succeededIds.includes(id)));
+      setFailures(result.failures.map(failure => `${failure.title}：${failure.message}`));
+      const uncertain = result.failures.filter(failure => failure.uncertain).length;
+      setProgress(`已退回 ${result.succeededIds.length} 条；未完成 ${result.failures.length} 条；未处理 ${result.unprocessed} 条。${uncertain ? `其中 ${uncertain} 条结果待核对，请刷新查看。` : ""}`);
+    } catch (cause) {
+      setFailures([cause instanceof Error ? cause.message : "批量退回未完成"]);
+      setProgress("批量退回未完成，请刷新后核对资料状态。");
+    } finally {
+      setBusy(false); running.current = false;
+      onRetry();
+      window.dispatchEvent(new Event("oa-library-updated"));
+    }
+  };
   if (loading && !busy) return <LoadingPanel label="正在加载待审核知识…" />;
   if (error && !busy) return <ErrorPanel message={error} onRetry={onRetry} />;
   return <div className="knowledge-list">
-    <div className="knowledge-list-summary"><span>待审核 {pendingCount || items.length} 条{pendingCount > items.length ? `，当前显示前 ${items.length} 条` : ""}</span><small>批量操作会审核入库；请先核对内容。全选仅包含当前已加载且可审核的资料。</small></div>
+    <div className="knowledge-list-summary"><span>待审核 {pendingCount || items.length} 条{pendingCount > items.length ? `，当前显示前 ${items.length} 条` : ""}</span><small>勾选资料后可批量通过或退回修改。全选仅包含当前已加载且可审核的资料。</small></div>
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", padding: "12px 0" }}>
-      <label style={{ display: "flex", gap: 8, alignItems: "center", minHeight: 44 }}><input type="checkbox" aria-label="全选当前待审资料" checked={all} disabled={busy || !eligible.length} onChange={() => { setConfirming(false); setChecked(all ? [] : eligible.map(item => item.id)); }} />全选</label>
+      <label style={{ display: "flex", gap: 8, alignItems: "center", minHeight: 44 }}><input type="checkbox" aria-label="全选当前待审资料" checked={all} disabled={busy || !eligible.length} onChange={() => { setConfirming(null); setChecked(all ? [] : eligible.map(item => item.id)); }} />全选</label>
       <span>已选 {chosen.length} 条</span>
-      <Button type="button" variant="outline" disabled={busy || !chosen.length} onClick={() => { setChecked([]); setConfirming(false); }}>取消选择</Button>
-      <label className="knowledge-bulk-scope"><span>批量审核范围</span><NativeSelect value={bulkVisibility} disabled={busy} onChange={event => { setBulkVisibility(event.target.value as KnowledgeVisibility); setConfirming(false); setBulkPublicConfirmation(""); }} aria-label="批量审核范围"><NativeSelectOption value="internal">对内</NativeSelectOption><NativeSelectOption value="public">对外</NativeSelectOption></NativeSelect></label>
-      <Button type="button" disabled={busy || !chosen.length} onClick={() => { setBulkPublicConfirmation(""); setConfirming(true); }}>批量通过并设为{bulkVisibility === "public" ? "对外" : "对内"}</Button>
+      <Button type="button" variant="outline" disabled={busy || !chosen.length} onClick={() => { setChecked([]); setConfirming(null); }}>取消选择</Button>
+      <label className="knowledge-bulk-scope"><span>批量审核范围</span><NativeSelect value={bulkVisibility} disabled={busy} onChange={event => { setBulkVisibility(event.target.value as KnowledgeVisibility); setConfirming(null); setBulkPublicConfirmation(""); }} aria-label="批量审核范围"><NativeSelectOption value="internal">对内</NativeSelectOption><NativeSelectOption value="public">对外</NativeSelectOption></NativeSelect></label>
+      <Button type="button" disabled={busy || !chosen.length} onClick={() => { setBulkPublicConfirmation(""); setConfirming("approve"); }}>批量通过并设为{bulkVisibility === "public" ? "对外" : "对内"}</Button>
+      <Button type="button" variant="outline" disabled={busy || !returnable.length} onClick={() => { setReturnNote(DEFAULT_KNOWLEDGE_RETURN_NOTE); setConfirming("return"); }}><RotateCcw className="size-4" />批量退回</Button>
       {busy && <Button type="button" variant="outline" onClick={() => { stopped.current = true; }}>停止后续处理</Button>}
     </div>
-    {confirming && !busy && <div role="group" aria-label="确认批量审核" style={{ padding: 12, border: "1px solid #ccc", borderRadius: 8 }}>
+    {confirming === "approve" && !busy && <div role="group" aria-label="确认批量审核" style={{ padding: 12, border: "1px solid #ccc", borderRadius: 8 }}>
       <p>将选中的 {chosen.length} 条资料审核通过并设为{bulkVisibility === "public" ? "对外公开，供 chat.omindos.cn 检索。" : "对内，供已完成准入的 OA 成员检索。"}</p>
       {bulkVisibility === "public" && <label className="knowledge-public-confirmation"><span>二次确认：输入 <code>{PUBLIC_KNOWLEDGE_CONFIRMATION}</code></span><Input aria-label="批量对外公开确认" value={bulkPublicConfirmation} onChange={event => setBulkPublicConfirmation(event.target.value)} placeholder={PUBLIC_KNOWLEDGE_CONFIRMATION} autoComplete="off" spellCheck={false} /><small>请确认选中资料均已完成审核与脱敏。公开后仍可在 OA 内检索。</small></label>}
       <Button type="button" disabled={bulkVisibility === "public" && bulkPublicConfirmation !== PUBLIC_KNOWLEDGE_CONFIRMATION} onClick={() => void run()}>确认通过 {chosen.length} 条</Button>{" "}
-      <Button type="button" variant="outline" onClick={() => setConfirming(false)}>取消</Button>
+      <Button type="button" variant="outline" onClick={() => setConfirming(null)}>取消</Button>
+    </div>}
+    {confirming === "return" && !busy && <div role="group" aria-label="确认批量退回" style={{ padding: 12, border: "1px solid #ccc", borderRadius: 8 }}>
+      <p>将选中的 {returnable.length} 条资料退回给提交人修改。</p>
+      {returnable.length < chosen.length && <p>其余 {chosen.length - returnable.length} 条资料当前不可退回，将跳过处理。</p>}
+      <label className="form-field"><span className="field-label">统一退回意见</span><Textarea aria-label="统一退回意见" value={returnNote} onChange={event => setReturnNote(event.target.value)} rows={2} maxLength={1000} placeholder={DEFAULT_KNOWLEDGE_RETURN_NOTE} /><small>未填写时使用“{DEFAULT_KNOWLEDGE_RETURN_NOTE}”。</small></label>
+      <Button type="button" disabled={!returnable.length || returnNote.trim().length === 1} onClick={() => void runReturn()}>确认退回 {returnable.length} 条</Button>{" "}
+      <Button type="button" variant="outline" onClick={() => setConfirming(null)}>取消</Button>
     </div>}
     {progress && <p role="status" aria-live="polite">{progress}{busy && " 请保持本页打开。"}</p>}
     {failures.length > 0 && <details><summary>查看失败明细（{failures.length} 条）</summary><ul>{failures.map((value, index) => <li key={index}>{value}</li>)}</ul></details>}
