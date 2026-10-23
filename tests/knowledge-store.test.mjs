@@ -563,7 +563,7 @@ test("管理列表无查询参数时保留待审核优先的原默认排序", as
   assert.equal(items[0].id, pendingId);
 });
 
-test("系统管理员可以批准并调整自己的知识，但不能自行退回、拒绝或撤销", async () => {
+test("系统管理员可以通过、退回并调整自己的知识，拒绝和撤销仍需其他审核人", async () => {
   const draft = submission({ title: "系统管理员本人投稿样例" });
   const created = await store.createKnowledgeItem(actor("submitter"), draft, await policy.hashKnowledgeSubmission(draft));
   const pending = await store.findKnowledgeItem(created.id, actor("submitter"));
@@ -577,11 +577,10 @@ test("系统管理员可以批准并调整自己的知识，但不能自行退�
   const reviewQueue = await store.listKnowledgeItems("review", adminSelf, true);
   assert.equal(reviewQueue.length, 1);
   assert.equal(reviewQueue[0].canReview, true);
-  assert.equal(reviewQueue[0].canReturn, false);
+  assert.equal(reviewQueue[0].canReturn, true);
   assert.equal(reviewQueue[0].canReject, false);
   assert.equal(await store.countPendingKnowledgeItems(adminSelf), 1);
 
-  assert.equal(await store.reviewKnowledgeItem(pending, adminSelf, "return", "自行退回"), null);
   assert.equal(await store.reviewKnowledgeItem(pending, adminSelf, "reject", "自行拒绝"), null);
   const approved = await store.reviewKnowledgeItem(pending, adminSelf, "approve", "确认内容准确", "internal");
   assert.equal(approved.status, "active");
@@ -1555,4 +1554,78 @@ test('administrator replacement packages keep large body parts before activating
   const activated = await store.activateAdminKnowledgeEdit(staged, admin);
   assert.equal(activated.status, 'active');
   assert.equal((await store.findKnowledgeItem(created.id, admin, true)).content, next.content);
+});
+
+test("管理员退回本人待审资料后可修改重提，并保留独立退回审计", async () => {
+  const draft = submission({ title: "管理员本人退回修改样例" });
+  const created = await store.createKnowledgeItem(actor("submitter"), draft, await policy.hashKnowledgeSubmission(draft));
+  const adminSelf = { ...actor("submitter"), isAdmin: true };
+  const pending = await store.findKnowledgeItem(created.id, adminSelf, true);
+  assert.equal(await store.reviewKnowledgeItem(pending, { ...actor("submitter"), configuredReviewer: true }, "return", "补充资料"), null);
+  const returned = await store.reviewKnowledgeItem(pending, adminSelf, "return", "请补充实验结果");
+  assert.equal(returned.status, "returned");
+  assert.equal(returned.reviewNote, "请补充实验结果");
+  assert.equal(returned.activeRevisionId, undefined);
+  assert.equal(await store.reviewKnowledgeItem(pending, adminSelf, "return", "重复退回"), null);
+  const detail = await store.getKnowledgeItemDetail(created.id, adminSelf, true);
+  assert.equal(detail.item.canReturn, false);
+  const event = detail.events.find(value => value.action === "returned");
+  assert.equal(event.note, policy.knowledgeAdminSelfAuditNote("请补充实验结果"));
+  assert.equal((await store.getActiveKnowledgeChunks(adminSelf)).length, 0);
+  assert.equal((await store.getPublicActiveKnowledgeChunks()).length, 0);
+  const changed = submission({ title: draft.title, content: `${draft.content}补充了实验结果与验证记录。` });
+  const current = await store.findKnowledgeItem(created.id, adminSelf);
+  const resubmitted = await store.resubmitKnowledgeItem(current, adminSelf, changed, await policy.hashKnowledgeSubmission(changed));
+  assert.equal(resubmitted.status, "pending");
+  const queue = await store.listKnowledgeItems("review", adminSelf, true);
+  assert.equal(queue[0].canReturn, true);
+});
+
+test("本人退回不接受部分身份匹配、失效成员版本或未激活身份", async () => {
+  const draft = submission({ title: "管理员本人退回身份检查" });
+  const created = await store.createKnowledgeItem(actor("submitter"), draft, await policy.hashKnowledgeSubmission(draft));
+  const adminSelf = { ...actor("submitter"), isAdmin: true };
+  const pending = await store.findKnowledgeItem(created.id, adminSelf, true);
+  for (const invalid of [
+    { ...adminSelf, email: "other@example.com" },
+    { ...actor("reviewer"), isAdmin: true, email: adminSelf.email },
+    { ...adminSelf, memberMutationRevision: "stale-member-version" },
+  ]) assert.equal(await store.reviewKnowledgeItem(pending, invalid, "return", "请补充资料"), null);
+  globalThis[stateKey].sqlite.prepare("UPDATE members SET status = 'pending' WHERE id = ?").run(adminSelf.memberId);
+  assert.equal(await store.reviewKnowledgeItem(pending, adminSelf, "return", "请补充资料"), null);
+  assert.equal(globalThis[stateKey].sqlite.prepare("SELECT COUNT(*) AS total FROM knowledge_events WHERE action = 'returned'").get().total, 0);
+});
+
+test("83 条管理员本人资料从列表能力到批量退回均实际写入隔离数据库", async () => {
+  const { returnKnowledgeBatch } = await import("../lib/knowledge-bulk-return.mjs");
+  const adminSelf = { ...actor("submitter"), isAdmin: true };
+  for (let index = 0; index < 83; index += 1) {
+    const draft = submission({ title: `本人批量退回测试 ${index}` });
+    await store.createKnowledgeItem(actor("submitter"), draft, await policy.hashKnowledgeSubmission(draft));
+  }
+  const queue = await store.listKnowledgeItems("review", adminSelf, true);
+  assert.equal(queue.length, 83);
+  assert.ok(queue.every(item => item.canReview && item.canReturn));
+  const result = await returnKnowledgeBatch(queue, "请补充或修改后重新提交", {
+    wait: async () => {},
+    request: async (url, options) => {
+      const id = decodeURIComponent(url.split("/").at(-1));
+      if (options.method !== "PATCH") return Response.json(await store.getKnowledgeItemDetail(id, adminSelf, true));
+      const body = JSON.parse(options.body);
+      assert.deepEqual(Object.keys(body).sort(), ["action", "mutationRevision", "note"]);
+      assert.equal(body.action, "return");
+      const existing = await store.findKnowledgeItem(id, adminSelf, true);
+      assert.equal(body.mutationRevision, existing.mutation_revision);
+      const item = await store.reviewKnowledgeItem(existing, adminSelf, body.action, body.note);
+      return item ? Response.json({ item }) : Response.json({ error: "退回失败" }, { status: 409 });
+    },
+  });
+  assert.equal(result.succeededIds.length, 83);
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.unprocessed, 0);
+  const db = globalThis[stateKey].sqlite;
+  assert.equal(db.prepare("SELECT COUNT(*) AS total FROM knowledge_items WHERE status = 'returned'").get().total, 83);
+  assert.equal(db.prepare("SELECT COUNT(*) AS total FROM knowledge_events WHERE action = 'returned'").get().total, 83);
+  assert.equal(db.prepare("SELECT COUNT(*) AS total FROM knowledge_chunks WHERE is_active = 1").get().total, 0);
+  assert.equal(await store.countPendingKnowledgeItems(adminSelf), 0);
 });

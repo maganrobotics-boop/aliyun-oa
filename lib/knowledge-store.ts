@@ -529,7 +529,7 @@ function itemCapabilities(row: KnowledgeItemRow, actor: KnowledgeActor, canRevie
   const canModerate = !row.is_deleted && canReview && !identity.overlaps;
   return {
     canReview: canApprove && row.status === "pending",
-    canReturn: canModerate && row.status === "pending",
+    canReturn: canApprove && row.status === "pending",
     canReject: canModerate && row.status === "pending",
     canRevoke: canModerate && row.status === "active",
     canSetVisibility: canApprove && row.status === "active",
@@ -1144,8 +1144,8 @@ export async function reviewKnowledgeItem(
   const mutationRevision = crypto.randomUUID();
   const eventId = crypto.randomUUID();
   const identity = submitterIdentity(existing, actor);
-  const adminSelfApproval = action === "approve" && actor.isAdmin && identity.exact;
-  const eventNote = adminSelfApproval ? knowledgeAdminSelfAuditNote(note) : note;
+  const adminSelfManagement = (action === "approve" || action === "return") && actor.isAdmin && identity.exact;
+  const eventNote = adminSelfManagement ? knowledgeAdminSelfAuditNote(note) : note;
   const nextStatus: KnowledgeStatus = action === "approve" ? "active" : action === "return" ? "returned" : action === "reject" ? "rejected" : "revoked";
   const expectedStatus: KnowledgeStatus = action === "revoke" ? "active" : "pending";
   const guard = actorGuard(actor, true);
@@ -1169,7 +1169,7 @@ export async function reviewKnowledgeItem(
     `).bind(nextStatus, action === "approve" ? visibility : existing.visibility,
       action === "approve" ? existing.current_revision_id : null, mutationRevision, now,
       action === "revoke" ? now : null, existing.id, expectedStatus, existing.current_revision_id,
-      existing.mutation_revision, adminSelfApproval ? 1 : 0, actor.memberId, normalizeEmail(actor.email), ...guard.values),
+      existing.mutation_revision, adminSelfManagement ? 1 : 0, actor.memberId, normalizeEmail(actor.email), ...guard.values),
   ];
   if (action === "revoke") {
     statements.push(database.prepare(`
