@@ -90,7 +90,7 @@ const vite = await createServer({
         }
         export async function reviewKnowledgeItem(existing, actor, action, note, visibility, publicConfirmation) {
           globalThis.${stateKey}.reviewCalls.push({ existing, actor, action, note, visibility, publicConfirmation });
-          return { id: existing.id, status: action === "approve" ? "active" : action };
+          return { id: existing.id, status: action === "approve" ? "active" : action === "return" ? "returned" : action };
         }
         export async function setKnowledgeItemVisibility(existing, actor, visibility, publicConfirmation) {
           globalThis.${stateKey}.visibilityCalls.push({ existing, actor, visibility, publicConfirmation });
@@ -262,7 +262,7 @@ test("退回等非批准动作不向 store 传入可见范围", async () => {
   assert.equal(globalThis[stateKey].reviewCalls[0].publicConfirmation, undefined);
 });
 
-test("普通成员和项目负责人不能自审，系统管理员可以批准自己的投稿", async () => {
+test("普通成员和项目负责人不能自审，系统管理员可以通过或退回自己的待审投稿", async () => {
   globalThis[stateKey].authorized = authorizedActor({
     user: { email: "member@example.com", displayName: "普通成员", authProvider: "chatgpt" },
     role: "member",
@@ -288,9 +288,16 @@ test("普通成员和项目负责人不能自审，系统管理员可以批准�
   assert.equal(globalThis[stateKey].reviewCalls[0].actor.isAdmin, true);
 
   const adminSelfReturn = await detailRoute.PATCH(patch({ action: "return", mutationRevision: "item-mutation-1", note: "自行退回" }), params);
-  assert.equal(adminSelfReturn.status, 403);
-  assert.match((await adminSelfReturn.json()).error, /只能批准自己的知识或调整可见范围/u);
-  assert.equal(globalThis[stateKey].reviewCalls.length, 1);
+  assert.equal(adminSelfReturn.status, 200);
+  assert.equal((await adminSelfReturn.json()).item.status, "returned");
+  assert.equal(globalThis[stateKey].reviewCalls.length, 2);
+  assert.equal(globalThis[stateKey].reviewCalls[1].action, "return");
+  assert.equal(globalThis[stateKey].reviewCalls[1].note, "自行退回");
+  assert.equal(globalThis[stateKey].reviewCalls[1].visibility, undefined);
+
+  const adminSelfReject = await detailRoute.PATCH(patch({ action: "reject", mutationRevision: "item-mutation-1", note: "自行拒绝" }), params);
+  assert.equal(adminSelfReject.status, 403);
+  assert.equal(globalThis[stateKey].reviewCalls.length, 2);
 });
 
 test("重新提交要求成员 ID 与邮箱同时匹配投稿人", async () => {
@@ -491,4 +498,18 @@ test("batch deletion uses the signed-in actor and returns per-item results witho
   state.rateAllowed = false;
   assert.equal((await batchDeleteRoute.POST(batchDeletionRequest())).status, 429);
   assert.equal(state.batchDeleteCalls.length, 1);
+});
+
+test("退回本人资料仍要求管理员身份以及成员 ID、邮箱同时匹配", async () => {
+  for (const scenario of [
+    { admin: false, memberId: "member-review", email: "review@example.com" },
+    { admin: true, memberId: "member-review", email: "other@example.com" },
+    { admin: true, memberId: "member-other", email: "review@example.com" },
+  ]) {
+    globalThis[stateKey].authorized = authorizedActor({ isAdmin: scenario.admin });
+    globalThis[stateKey].existing = existingItem({ submitter_member_id: scenario.memberId, submitter_email: scenario.email });
+    const response = await detailRoute.PATCH(patch({ action: "return", mutationRevision: "item-mutation-1", note: "请补充材料" }), params);
+    assert.equal(response.status, 403);
+  }
+  assert.equal(globalThis[stateKey].reviewCalls.length, 0);
 });
